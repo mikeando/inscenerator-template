@@ -100,7 +100,10 @@ fn render_node(
 }
 
 /// Evaluate an expression string against a context.
-/// Supports dotted paths (user.name), boolean literals, and integer literals.
+///
+/// 'eval' here refers to the process of resolving an expression (like "user.name" or "!flag")
+/// into a `Value` by looking it up in the provided `DataSource` or parsing it as a literal.
+/// Currently, this is a simple lookup/literal parser and doesn't support full arithmetic.
 fn eval(expr: &str, ctx: &dyn DataSource) -> Value {
     match expr {
         "true" => return Value::Bool(true),
@@ -165,7 +168,7 @@ impl<'a> DataSource for LoopContext<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context;
+    use crate::{context, ctx};
 
     #[test]
     fn test_eval_literals() {
@@ -199,14 +202,24 @@ mod tests {
     fn test_render_if() {
         let tmpl = Template::parse("{% if a %}A{% elif b %}B{% else %}C{% endif %}").unwrap();
 
-        let ctx_a = context! { "a" => Value::Bool(true) };
+        let ctx_a = ctx! { "a": true };
         assert_eq!(render(&tmpl, ctx_a.as_ref()).unwrap(), "A");
 
-        let ctx_b = context! { "a" => Value::Bool(false), "b" => Value::Bool(true) };
+        let ctx_b = ctx! { "a": false, "b": true };
         assert_eq!(render(&tmpl, ctx_b.as_ref()).unwrap(), "B");
 
-        let ctx_c = context! { "a" => Value::Bool(false), "b" => Value::Bool(false) };
+        let ctx_c = ctx! { "a": false, "b": false };
         assert_eq!(render(&tmpl, ctx_c.as_ref()).unwrap(), "C");
+    }
+
+    #[test]
+    fn test_render_if_non_bool_error() {
+        let tmpl = Template::parse("{% if a %}A{% endif %}").unwrap();
+        let ctx = ctx! { "a": "not a bool" };
+        // Exposing bug: currently it uses truthiness, but should be an error
+        let result = render(&tmpl, ctx.as_ref());
+        assert!(result.is_err(), "Conditionals should require boolean values");
+        assert_eq!(result.unwrap_err(), "Conditional expression `a` must evaluate to a Bool, got `not a bool` ");
     }
 
     #[test]

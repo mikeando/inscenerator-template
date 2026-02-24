@@ -1,4 +1,4 @@
-use crate::{DataSource, Template, Value, context, render};
+use crate::{DataSource, Template, Value, context, ctx, render};
 use std::sync::Arc;
 
 // --- A real struct implementing DataSource ---
@@ -256,16 +256,16 @@ fn test_complex_nesting() {
     let mut tmpl = Template::parse(src).unwrap();
     tmpl.add_fragment("CurrencySymbol", r#"{% if is_usd %}${% else %}€{% endif %}"#).unwrap();
 
-    let ctx = context! {
-        "categories" => Value::from(vec![
-            Value::Map(context! {
-                "name" => Value::from("Electronics"),
-                "products" => Value::from(vec![
-                    Value::Map(context! { "name" => Value::from("Phone"), "is_usd" => Value::from(true) }),
-                    Value::Map(context! { "name" => Value::from("Laptop"), "is_usd" => Value::from(false) }),
-                ])
-            })
-        ])
+    let ctx = ctx! {
+        "categories": [
+            {
+                "name": "Electronics",
+                "products": [
+                    { "name": "Phone", "is_usd": true },
+                    { "name": "Laptop", "is_usd": false }
+                ]
+            }
+        ]
     };
 
     let output = render(&tmpl, ctx.as_ref()).unwrap();
@@ -276,22 +276,22 @@ fn test_complex_nesting() {
 
 #[test]
 fn test_utf8_integration() {
-    let src = "你好，{{ name }}！{% if happy %}😊{% endif %}";
+    let src = "你好，{{ 用户名 }}！{% if 快乐 %}😊{% endif %}";
     let tmpl = Template::parse(src).unwrap();
-    let ctx = context! {
-        "name" => Value::from("世界"),
-        "happy" => Value::Bool(true)
+    let ctx = ctx! {
+        "用户名": "世界",
+        "快乐": true
     };
     assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "你好，世界！😊");
 }
 
 #[test]
-fn test_missing_variable_renders_empty() {
+fn test_missing_variable_errors() {
     let tmpl = Template::parse("Before{{ missing }}After").unwrap();
-    let ctx = context! {};
-    // Exposing bug: currently missing variables render as empty string,
-    // but user wants them to be errors.
-    assert!(render(&tmpl, ctx.as_ref()).is_err());
+    let ctx = ctx! {};
+    // Exposing bug: missing variables should be an error
+    let err = render(&tmpl, ctx.as_ref()).unwrap_err();
+    assert_eq!(err, "Variable not found: `missing` ");
 }
 
 #[test]
@@ -304,12 +304,12 @@ fn test_whitespace_preservation() {
 }
 
 #[test]
-fn test_invalid_expression_renders_empty() {
-    // Current eval() doesn't support errors, so it just does a lookup of the whole string.
-    // This should ideally be a parsing or evaluation error.
+fn test_invalid_expression_errors() {
+    // Current eval() doesn't support errors. This should be an evaluation error.
     let tmpl = Template::parse("{{ a b c }}").unwrap();
-    let ctx = context! {};
-    assert!(render(&tmpl, ctx.as_ref()).is_err());
+    let ctx = ctx! {};
+    let err = render(&tmpl, ctx.as_ref()).unwrap_err();
+    assert!(err.contains("Invalid expression") || err.contains("Variable not found"));
 }
 
 #[test]
@@ -319,10 +319,32 @@ fn test_utf8_variable_names() {
     assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "张三");
 }
 
-// #[test]
-// fn test_deep_fragment_recursion() {
-//     let mut tmpl = Template::parse("{{ Recurse self }}").unwrap();
-//     tmpl.add_fragment("Recurse", "{{ Recurse self }}").unwrap();
-//     let ctx = context! { "self" => Value::Map(context!{}) };
-//     render(&tmpl, ctx.as_ref()).unwrap();
-// }
+#[test]
+fn test_deep_fragment_recursion() {
+    let mut tmpl = Template::parse("{{ Recurse self }}").unwrap();
+    tmpl.add_fragment("Recurse", "{{ Recurse self }}").unwrap();
+
+    #[derive(Debug)]
+    struct RecursiveDS;
+    impl DataSource for RecursiveDS {
+        fn get(&self, key: &str) -> Value {
+            if key == "self" {
+                Value::Map(Arc::new(RecursiveDS))
+            } else {
+                Value::Null
+            }
+        }
+    }
+
+    // This WILL stack overflow, exposing the lack of recursion limits.
+    render(&tmpl, &RecursiveDS).unwrap();
+}
+
+#[test]
+fn test_non_bool_conditional_error() {
+    let tmpl = Template::parse("{% if val %}YES{% endif %}").unwrap();
+    let ctx = ctx! { "val": "non-bool" };
+    // User wants non-bools in conditionals to be an error
+    let err = render(&tmpl, ctx.as_ref()).unwrap_err();
+    assert!(err.contains("Conditional must be a boolean"));
+}

@@ -221,18 +221,17 @@ mod tests {
         // So anything after {% else %} but before its body is consumed...
         // wait, parse_nodes is called for else body.
         // Let's re-read parse_nodes for Else:
-        /*
-                        Some(Token::Else) => {
-                            iter.next();
-                            else_body = Some(parse_nodes(iter, true, in_for)?);
-                            // consume endif
-                            match iter.next() {
-                                Some(Token::EndIf) => {}
-                                _ => return Err("Expected {% endif %}".to_string()),
-                            }
-                            break;
-                        }
-        */
+        //
+        // Some(Token::Else) => {
+        //     iter.next();
+        //     else_body = Some(parse_nodes(iter, true, in_for)?);
+        //     // consume endif
+        //     match iter.next() {
+        //         Some(Token::EndIf) => {}
+        //         _ => return Err("Expected {% endif %}".to_string()),
+        //     }
+        //     break;
+        // }
         // It calls parse_nodes for the else body. If it sees {% elif %} inside the else body,
         // it will be an error because in_if is true, and it breaks loop, then back in Else branch
         // it expects EndIf but gets Elif.

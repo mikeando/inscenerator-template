@@ -76,19 +76,63 @@ impl DataSource for HashMap<&'static str, Value> {
     }
 }
 
-/// Convenience macro for building map contexts inline.
-/// Usage: context!{ "name" => Value::Str("Alice".into()), "age" => Value::Int(30) }
+/// A powerful macro for building nested map contexts inline.
+/// Supports nesting with { ... } and lists with [ ... ].
+/// Usage:
+/// ctx! {
+///     "name": "Alice",
+///     "age": 30,
+///     "address": { "city": "London" },
+///     "tags": ["rust", "template"]
+/// }
 #[macro_export]
-macro_rules! context {
+macro_rules! ctx {
+    // Helper to convert values, including nested maps and lists
+    (@val { }) => {
+        $crate::Value::Map($crate::ctx!())
+    };
+    (@val { $($k:tt : $v:tt),* $(,)? }) => {
+        $crate::Value::Map($crate::ctx! { $($k : $v),* })
+    };
+    (@val [ $($v:tt),* $(,)? ]) => {
+        $crate::Value::List(std::sync::Arc::new(vec![ $($crate::ctx!(@val $v)),* ]))
+    };
+    (@val $v:expr) => {
+        $crate::Value::from($v)
+    };
+
+    // Empty map
     () => {{
         let map: std::collections::HashMap<&'static str, $crate::Value> =
             std::collections::HashMap::new();
         std::sync::Arc::new(map) as std::sync::Arc<dyn $crate::DataSource>
     }};
-    ($($key:expr => $val:expr),* $(,)?) => {{
+
+    // Map with entries
+    ($($k:tt : $v:tt),* $(,)?) => {{
+        #[allow(unused_mut)]
         let mut map: std::collections::HashMap<&'static str, $crate::Value> =
             std::collections::HashMap::new();
-        $(map.insert($key, $val);)*
+        $(
+            map.insert($k, $crate::ctx!(@val $v));
+        )*
+        std::sync::Arc::new(map) as std::sync::Arc<dyn $crate::DataSource>
+    }};
+}
+
+/// Backward-compatible alias for ctx! using => syntax.
+#[macro_export]
+macro_rules! context {
+    ($($key:expr => $val:expr),* $(,)?) => {{
+        #[allow(unused_mut)]
+        let mut map: std::collections::HashMap<&'static str, $crate::Value> =
+            std::collections::HashMap::new();
+        $(map.insert($key, $crate::Value::from($val));)*
+        std::sync::Arc::new(map) as std::sync::Arc<dyn $crate::DataSource>
+    }};
+    () => {{
+        let map: std::collections::HashMap<&'static str, $crate::Value> =
+            std::collections::HashMap::new();
         std::sync::Arc::new(map) as std::sync::Arc<dyn $crate::DataSource>
     }};
 }

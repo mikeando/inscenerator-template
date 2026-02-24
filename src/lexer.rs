@@ -157,54 +157,65 @@ fn parse_block(inner: &str) -> Result<Token, String> {
 mod tests {
     use super::*;
 
+    fn tk_text(s: &str) -> Token {
+        Token::Text(s.to_string())
+    }
+    fn tk_out(s: &str) -> Token {
+        Token::Output(s.to_string())
+    }
+    fn tk_frag(f: &str, c: &str) -> Token {
+        Token::FragmentCall {
+            fragment: f.to_string(),
+            ctx_expr: c.to_string(),
+        }
+    }
+
     #[test]
     fn test_tokenize_basic() {
         let src = "Hello {{ name }}!";
-        let tokens = tokenize(src).unwrap();
-        assert_eq!(tokens.len(), 3);
-        assert_eq!(tokens[0], Token::Text("Hello ".to_string()));
-        assert_eq!(tokens[1], Token::Output("name".to_string()));
-        assert_eq!(tokens[2], Token::Text("!".to_string()));
+        assert_eq!(
+            tokenize(src).unwrap(),
+            vec![tk_text("Hello "), tk_out("name"), tk_text("!")]
+        );
     }
 
     #[test]
     fn test_tokenize_fragment() {
         let src = "{{ Fragment arg }}";
-        let tokens = tokenize(src).unwrap();
-        assert_eq!(
-            tokens[0],
-            Token::FragmentCall {
-                fragment: "Fragment".to_string(),
-                ctx_expr: "arg".to_string()
-            }
-        );
+        assert_eq!(tokenize(src).unwrap(), vec![tk_frag("Fragment", "arg")]);
     }
 
     #[test]
     fn test_tokenize_blocks() {
         let src = "{% if a %}A{% elif b %}B{% else %}C{% endif %}";
-        let tokens = tokenize(src).unwrap();
-        assert_eq!(tokens[0], Token::If("a".to_string()));
-        assert_eq!(tokens[1], Token::Text("A".to_string()));
-        assert_eq!(tokens[2], Token::Elif("b".to_string()));
-        assert_eq!(tokens[3], Token::Text("B".to_string()));
-        assert_eq!(tokens[4], Token::Else);
-        assert_eq!(tokens[5], Token::Text("C".to_string()));
-        assert_eq!(tokens[6], Token::EndIf);
+        assert_eq!(
+            tokenize(src).unwrap(),
+            vec![
+                Token::If("a".to_string()),
+                tk_text("A"),
+                Token::Elif("b".to_string()),
+                tk_text("B"),
+                Token::Else,
+                tk_text("C"),
+                Token::EndIf,
+            ]
+        );
     }
 
     #[test]
     fn test_tokenize_for() {
         let src = "{% for item in items %}...{% endfor %}";
-        let tokens = tokenize(src).unwrap();
         assert_eq!(
-            tokens[0],
-            Token::For {
-                item: "item".to_string(),
-                list: "items".to_string()
-            }
+            tokenize(src).unwrap(),
+            vec![
+                Token::For {
+                    item: "item".to_string(),
+                    list: "items".to_string()
+                },
+                tk_text("..."),
+                Token::EndFor,
+            ]
         );
-        assert_eq!(tokens[2], Token::EndFor);
     }
 
     #[test]
