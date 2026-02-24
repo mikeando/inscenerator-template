@@ -1,4 +1,4 @@
-use crate::{DataSource, Template, Value, context, ctx, render};
+use crate::{DataSource, Template, Value, ctx, render};
 use std::sync::Arc;
 
 // --- A real struct implementing DataSource ---
@@ -24,7 +24,7 @@ impl DataSource for User {
 #[test]
 fn test_simple_output() {
     let tmpl = Template::parse("Hello, {{ name }}!").unwrap();
-    let ctx = context! { "name" => Value::from("World") };
+    let ctx = ctx! { "name": "World" };
     assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "Hello, World!");
 }
 
@@ -64,9 +64,9 @@ fn test_elif() {
     let src = "{% if a %}A{% elif b %}B{% else %}C{% endif %}";
     let tmpl = Template::parse(src).unwrap();
 
-    let ctx_a = context! { "a" => Value::Bool(true),  "b" => Value::Bool(false) };
-    let ctx_b = context! { "a" => Value::Bool(false), "b" => Value::Bool(true) };
-    let ctx_c = context! { "a" => Value::Bool(false), "b" => Value::Bool(false) };
+    let ctx_a = ctx! { "a": true,  "b": false };
+    let ctx_b = ctx! { "a": false, "b": true };
+    let ctx_c = ctx! { "a": false, "b": false };
 
     assert_eq!(render(&tmpl, ctx_a.as_ref()).unwrap(), "A");
     assert_eq!(render(&tmpl, ctx_b.as_ref()).unwrap(), "B");
@@ -77,12 +77,8 @@ fn test_elif() {
 fn test_for_loop() {
     let src = "{% for item in items %}[{{ item }}]{% endfor %}";
     let tmpl = Template::parse(src).unwrap();
-    let ctx = context! {
-        "items" => Value::from(vec![
-            Value::from("a"),
-            Value::from("b"),
-            Value::from("c"),
-        ])
+    let ctx = ctx! {
+        "items": ["a", "b", "c"]
     };
     assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "[a][b][c]");
 }
@@ -110,7 +106,7 @@ fn test_nested_map_in_loop() {
 
     let src = "{% for it in items %}{{ it.label }} {% endfor %}";
     let tmpl = Template::parse(src).unwrap();
-    let ctx = context! { "items" => items };
+    let ctx = ctx! { "items": items };
     assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "foo bar ");
 }
 
@@ -118,27 +114,12 @@ fn test_nested_map_in_loop() {
 fn test_fragment_call_with_map_context() {
     // A fragment is called with {{ FragmentName expr }} where expr resolves to a Map.
     // The fragment's variables resolve against that map, not the outer context.
-    #[derive(Debug)]
-    struct Product {
-        name: &'static str,
-        price: i64,
-    }
-    impl DataSource for Product {
-        fn get(&self, key: &str) -> Value {
-            match key {
-                "name" => Value::from(self.name),
-                "price" => Value::Int(self.price),
-                _ => Value::Null,
-            }
-        }
-    }
-
     let mut tmpl = Template::parse("{{ ProductView product }}").unwrap();
     tmpl.add_fragment("ProductView", "{{ name }}: ${{ price }}")
         .unwrap();
 
-    let ctx = context! {
-        "product" => Value::Map(Arc::new(Product { name: "Widget", price: 9 }))
+    let ctx = ctx! {
+        "product": { "name": "Widget", "price": 9 }
     };
     assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "Widget: $9");
 }
@@ -167,15 +148,15 @@ fn test_fragment_call_in_loop() {
     let mut tmpl = Template::parse("{% for it in items %}{{ Row it }}{% endfor %}").unwrap();
     tmpl.add_fragment("Row", "[{{ label }}]").unwrap();
 
-    let ctx = context! { "items" => items };
+    let ctx = ctx! { "items": items };
     assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "[foo][bar]");
 }
 
 #[test]
 fn test_fragment_unknown_errors() {
     let _tmpl = Template::parse("{{ Missing thing }}").unwrap();
-    let _ctx = context! {
-        "thing" => Value::Map(context! {})
+    let _ctx = ctx! {
+        "thing": {}
     };
     // Can't easily use Value::Map(context!{}) directly here, so test via a known-missing name
     let tmpl2 = Template::parse("{{ Ghost x }}").unwrap();
@@ -187,14 +168,14 @@ fn test_fragment_unknown_errors() {
         }
     }
     // context expr resolving to Null should return an error
-    let ctx2 = context! {};
+    let ctx2 = ctx! {};
     assert!(render(&tmpl2, ctx2.as_ref()).is_err());
 }
 
 #[test]
 fn test_comment_ignored() {
     let tmpl = Template::parse("a{# this is a comment #}b").unwrap();
-    let ctx = context! {};
+    let ctx = ctx! {};
     assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "ab");
 }
 
@@ -202,7 +183,7 @@ fn test_comment_ignored() {
 fn test_negation() {
     let src = "{% if !flag %}yes{% endif %}";
     let tmpl = Template::parse(src).unwrap();
-    let ctx = context! { "flag" => Value::Bool(false) };
+    let ctx = ctx! { "flag": false };
     assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "yes");
 }
 
@@ -276,13 +257,13 @@ fn test_complex_nesting() {
 
 #[test]
 fn test_utf8_integration() {
-    let src = "你好，{{ 用户名 }}！{% if 快乐 %}😊{% endif %}";
+    let src = "Hållø, {{ üsër }}! {% if håppÿ %}😊{% endif %}";
     let tmpl = Template::parse(src).unwrap();
     let ctx = ctx! {
-        "用户名": "世界",
-        "快乐": true
+        "üsër": "Wørld",
+        "håppÿ": true
     };
-    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "你好，世界！😊");
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "Hållø, Wørld! 😊");
 }
 
 #[test]
@@ -298,7 +279,7 @@ fn test_missing_variable_errors() {
 fn test_whitespace_preservation() {
     let src = "  {% if true %}  A  {% endif %}  ";
     let tmpl = Template::parse(src).unwrap();
-    let ctx = context! {};
+    let ctx = ctx! {};
     // current implementation preserves everything outside tags
     assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "    A    ");
 }
@@ -314,9 +295,9 @@ fn test_invalid_expression_errors() {
 
 #[test]
 fn test_utf8_variable_names() {
-    let tmpl = Template::parse("{{ 名字 }}").unwrap();
-    let ctx = context! { "名字" => Value::from("张三") };
-    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "张三");
+    let tmpl = Template::parse("{{ nåmë }}").unwrap();
+    let ctx = ctx! { "nåmë": "Ålïcë" };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "Ålïcë");
 }
 
 #[test]

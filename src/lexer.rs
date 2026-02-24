@@ -227,11 +227,11 @@ mod tests {
 
     #[test]
     fn test_tokenize_utf8() {
-        let src = "你好 {{ 名字 }}！";
+        let src = "Hållø {{ nåmë }}! 🚀";
         let tokens = tokenize(src).unwrap();
-        assert_eq!(tokens[0], Token::Text("你好 ".to_string()));
-        assert_eq!(tokens[1], Token::Output("名字".to_string()));
-        assert_eq!(tokens[2], Token::Text("！".to_string()));
+        assert_eq!(tokens[0], Token::Text("Hållø ".to_string()));
+        assert_eq!(tokens[1], Token::Output("nåmë".to_string()));
+        assert_eq!(tokens[2], Token::Text("! 🚀".to_string()));
     }
 
     #[test]

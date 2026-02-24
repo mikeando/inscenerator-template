@@ -168,11 +168,11 @@ impl<'a> DataSource for LoopContext<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{context, ctx};
+    use crate::ctx;
 
     #[test]
     fn test_eval_literals() {
-        let ctx = context! {};
+        let ctx = ctx! {};
         assert_eq!(eval("true", ctx.as_ref()).render(), "true");
         assert_eq!(eval("false", ctx.as_ref()).render(), "false");
         assert_eq!(eval("null", ctx.as_ref()).render(), "");
@@ -184,7 +184,7 @@ mod tests {
 
     #[test]
     fn test_eval_negation() {
-        let ctx = context! { "flag" => Value::Bool(true) };
+        let ctx = ctx! { "flag": true };
         assert_eq!(eval("!flag", ctx.as_ref()).render(), "false");
         assert_eq!(eval("!!flag", ctx.as_ref()).render(), "true");
         assert_eq!(eval("!false", ctx.as_ref()).render(), "true");
@@ -192,8 +192,7 @@ mod tests {
 
     #[test]
     fn test_eval_dotted_path() {
-        let inner = context! { "a" => Value::Int(1) };
-        let ctx = context! { "inner" => Value::Map(inner) };
+        let ctx = ctx! { "inner": { "a": 1 } };
         assert_eq!(eval("inner.a", ctx.as_ref()).render(), "1");
         assert!(matches!(eval("inner.b", ctx.as_ref()), Value::Null));
     }
@@ -225,7 +224,7 @@ mod tests {
     #[test]
     fn test_render_for_non_list() {
         let tmpl = Template::parse("{% for i in items %}loop{% endfor %}").unwrap();
-        let ctx = context! { "items" => Value::Int(123) };
+        let ctx = ctx! { "items": 123 };
         // Exposing bug: currently it skips silently, but should probably be an error.
         assert!(render(&tmpl, ctx.as_ref()).is_err());
     }
@@ -233,7 +232,7 @@ mod tests {
     #[test]
     fn test_render_fragment_missing() {
         let tmpl = Template::parse("{{ Missing ctx }}").unwrap();
-        let ctx = context! { "ctx" => Value::Map(context!{}) };
+        let ctx = ctx! { "ctx": {} };
         assert!(render(&tmpl, ctx.as_ref()).is_err());
     }
 
@@ -241,7 +240,7 @@ mod tests {
     fn test_render_fragment_wrong_ctx_type() {
         let mut tmpl = Template::parse("{{ Frag ctx }}").unwrap();
         tmpl.add_fragment("Frag", "hi").unwrap();
-        let ctx = context! { "ctx" => Value::Int(123) };
+        let ctx = ctx! { "ctx": 123 };
         assert!(render(&tmpl, ctx.as_ref()).is_err());
     }
 
@@ -249,9 +248,9 @@ mod tests {
     fn test_loop_scoping() {
         let src = "{% for i in items %}{{ i }}{{ outer }}{% endfor %}";
         let tmpl = Template::parse(src).unwrap();
-        let ctx = context! {
-            "outer" => Value::from("!"),
-            "items" => Value::from(vec![Value::Int(1), Value::Int(2)])
+        let ctx = ctx! {
+            "outer": "!",
+            "items": [1, 2]
         };
         assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "1!2!");
     }

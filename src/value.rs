@@ -174,6 +174,12 @@ impl From<Vec<Value>> for Value {
     }
 }
 
+impl From<Arc<dyn DataSource>> for Value {
+    fn from(src: Arc<dyn DataSource>) -> Self {
+        Value::Map(src)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -193,7 +199,7 @@ mod tests {
         assert!(!Value::from("").is_truthy());
         assert!(Value::from(vec![Value::Int(1)]).is_truthy());
         assert!(!Value::from(vec![]).is_truthy());
-        assert!(Value::Map(context!()).is_truthy());
+        assert!(Value::Map(ctx!()).is_truthy());
     }
 
     #[test]
@@ -208,13 +214,13 @@ mod tests {
             Value::from(vec![Value::Int(1), Value::from("two")]).render(),
             "1, two"
         );
-        assert_eq!(Value::Map(context!()).render(), "[object]");
+        assert_eq!(Value::Map(ctx!()).render(), "[object]");
     }
 
     #[test]
     fn test_get_path() {
-        let inner = context! { "a" => Value::Int(1) };
-        let outer = context! { "inner" => Value::Map(inner) };
+        let inner = ctx! { "a": 1 };
+        let outer = ctx! { "inner": inner };
         let val = Value::Map(outer);
 
         assert_eq!(val.get_path("inner.a").render(), "1");
