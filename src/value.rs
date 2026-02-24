@@ -76,19 +76,63 @@ impl DataSource for HashMap<&'static str, Value> {
     }
 }
 
-/// Convenience macro for building map contexts inline.
-/// Usage: context!{ "name" => Value::Str("Alice".into()), "age" => Value::Int(30) }
+/// A powerful macro for building nested map contexts inline.
+/// Supports nesting with { ... } and lists with [ ... ].
+/// Usage:
+/// ctx! {
+///     "name": "Alice",
+///     "age": 30,
+///     "address": { "city": "London" },
+///     "tags": ["rust", "template"]
+/// }
 #[macro_export]
-macro_rules! context {
+macro_rules! ctx {
+    // Helper to convert values, including nested maps and lists
+    (@val { }) => {
+        $crate::Value::Map($crate::ctx!())
+    };
+    (@val { $($k:tt : $v:tt),* $(,)? }) => {
+        $crate::Value::Map($crate::ctx! { $($k : $v),* })
+    };
+    (@val [ $($v:tt),* $(,)? ]) => {
+        $crate::Value::List(std::sync::Arc::new(vec![ $($crate::ctx!(@val $v)),* ]))
+    };
+    (@val $v:expr) => {
+        $crate::Value::from($v)
+    };
+
+    // Empty map
     () => {{
         let map: std::collections::HashMap<&'static str, $crate::Value> =
             std::collections::HashMap::new();
         std::sync::Arc::new(map) as std::sync::Arc<dyn $crate::DataSource>
     }};
-    ($($key:expr => $val:expr),* $(,)?) => {{
+
+    // Map with entries
+    ($($k:tt : $v:tt),* $(,)?) => {{
+        #[allow(unused_mut)]
         let mut map: std::collections::HashMap<&'static str, $crate::Value> =
             std::collections::HashMap::new();
-        $(map.insert($key, $val);)*
+        $(
+            map.insert($k, $crate::ctx!(@val $v));
+        )*
+        std::sync::Arc::new(map) as std::sync::Arc<dyn $crate::DataSource>
+    }};
+}
+
+/// Backward-compatible alias for ctx! using => syntax.
+#[macro_export]
+macro_rules! context {
+    ($($key:expr => $val:expr),* $(,)?) => {{
+        #[allow(unused_mut)]
+        let mut map: std::collections::HashMap<&'static str, $crate::Value> =
+            std::collections::HashMap::new();
+        $(map.insert($key, $crate::Value::from($val));)*
+        std::sync::Arc::new(map) as std::sync::Arc<dyn $crate::DataSource>
+    }};
+    () => {{
+        let map: std::collections::HashMap<&'static str, $crate::Value> =
+            std::collections::HashMap::new();
         std::sync::Arc::new(map) as std::sync::Arc<dyn $crate::DataSource>
     }};
 }
@@ -127,5 +171,71 @@ impl From<bool> for Value {
 impl From<Vec<Value>> for Value {
     fn from(v: Vec<Value>) -> Self {
         Value::List(Arc::new(v))
+    }
+}
+
+impl From<Arc<dyn DataSource>> for Value {
+    fn from(src: Arc<dyn DataSource>) -> Self {
+        Value::Map(src)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_truthy() {
+        assert!(!Value::Null.is_truthy());
+        assert!(Value::Bool(true).is_truthy());
+        assert!(!Value::Bool(false).is_truthy());
+        assert!(Value::Int(1).is_truthy());
+        assert!(Value::Int(-1).is_truthy());
+        assert!(!Value::Int(0).is_truthy());
+        assert!(Value::Float(1.0).is_truthy());
+        assert!(Value::Float(-0.5).is_truthy());
+        assert!(!Value::Float(0.0).is_truthy());
+        assert!(Value::from("abc").is_truthy());
+        assert!(!Value::from("").is_truthy());
+        assert!(Value::from(vec![Value::Int(1)]).is_truthy());
+        assert!(!Value::from(vec![]).is_truthy());
+        assert!(Value::Map(ctx!()).is_truthy());
+    }
+
+    #[test]
+    fn test_render() {
+        assert_eq!(Value::Null.render(), "");
+        assert_eq!(Value::Bool(true).render(), "true");
+        assert_eq!(Value::Bool(false).render(), "false");
+        assert_eq!(Value::Int(123).render(), "123");
+        assert_eq!(Value::Float(1.23).render(), "1.23");
+        assert_eq!(Value::from("hello").render(), "hello");
+        assert_eq!(
+            Value::from(vec![Value::Int(1), Value::from("two")]).render(),
+            "1, two"
+        );
+        assert_eq!(Value::Map(ctx!()).render(), "[object]");
+    }
+
+    #[test]
+    fn test_get_path() {
+        let inner = ctx! { "a": 1 };
+        let outer = ctx! { "inner": inner };
+        let val = Value::Map(outer);
+
+        assert_eq!(val.get_path("inner.a").render(), "1");
+        assert!(matches!(val.get_path("inner.b"), Value::Null));
+        assert!(matches!(val.get_path("missing.a"), Value::Null));
+        assert!(matches!(val.get_path("inner.a.nothing"), Value::Null));
+    }
+
+    #[test]
+    fn test_from_impls() {
+        assert!(matches!(Value::from("hi"), Value::Str(_)));
+        assert!(matches!(Value::from("hi".to_string()), Value::Str(_)));
+        assert!(matches!(Value::from(10i64), Value::Int(10)));
+        assert!(matches!(Value::from(1.5f64), Value::Float(_)));
+        assert!(matches!(Value::from(true), Value::Bool(true)));
+        assert!(matches!(Value::from(vec![]), Value::List(_)));
     }
 }

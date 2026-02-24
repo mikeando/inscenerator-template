@@ -100,7 +100,10 @@ fn render_node(
 }
 
 /// Evaluate an expression string against a context.
-/// Supports dotted paths (user.name), boolean literals, and integer literals.
+///
+/// 'eval' here refers to the process of resolving an expression (like "user.name" or "!flag")
+/// into a `Value` by looking it up in the provided `DataSource` or parsing it as a literal.
+/// Currently, this is a simple lookup/literal parser and doesn't support full arithmetic.
 fn eval(expr: &str, ctx: &dyn DataSource) -> Value {
     match expr {
         "true" => return Value::Bool(true),
@@ -159,5 +162,96 @@ impl<'a> DataSource for LoopContext<'a> {
         } else {
             self.parent.get(key)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ctx;
+
+    #[test]
+    fn test_eval_literals() {
+        let ctx = ctx! {};
+        assert_eq!(eval("true", ctx.as_ref()).render(), "true");
+        assert_eq!(eval("false", ctx.as_ref()).render(), "false");
+        assert_eq!(eval("null", ctx.as_ref()).render(), "");
+        assert_eq!(eval("123", ctx.as_ref()).render(), "123");
+        assert_eq!(eval("1.23", ctx.as_ref()).render(), "1.23");
+        assert_eq!(eval("\"hello\"", ctx.as_ref()).render(), "hello");
+        assert_eq!(eval("'world'", ctx.as_ref()).render(), "world");
+    }
+
+    #[test]
+    fn test_eval_negation() {
+        let ctx = ctx! { "flag": true };
+        assert_eq!(eval("!flag", ctx.as_ref()).render(), "false");
+        assert_eq!(eval("!!flag", ctx.as_ref()).render(), "true");
+        assert_eq!(eval("!false", ctx.as_ref()).render(), "true");
+    }
+
+    #[test]
+    fn test_eval_dotted_path() {
+        let ctx = ctx! { "inner": { "a": 1 } };
+        assert_eq!(eval("inner.a", ctx.as_ref()).render(), "1");
+        assert!(matches!(eval("inner.b", ctx.as_ref()), Value::Null));
+    }
+
+    #[test]
+    fn test_render_if() {
+        let tmpl = Template::parse("{% if a %}A{% elif b %}B{% else %}C{% endif %}").unwrap();
+
+        let ctx_a = ctx! { "a": true };
+        assert_eq!(render(&tmpl, ctx_a.as_ref()).unwrap(), "A");
+
+        let ctx_b = ctx! { "a": false, "b": true };
+        assert_eq!(render(&tmpl, ctx_b.as_ref()).unwrap(), "B");
+
+        let ctx_c = ctx! { "a": false, "b": false };
+        assert_eq!(render(&tmpl, ctx_c.as_ref()).unwrap(), "C");
+    }
+
+    #[test]
+    fn test_render_if_non_bool_error() {
+        let tmpl = Template::parse("{% if a %}A{% endif %}").unwrap();
+        let ctx = ctx! { "a": "not a bool" };
+        // Exposing bug: currently it uses truthiness, but should be an error
+        let result = render(&tmpl, ctx.as_ref());
+        assert!(result.is_err(), "Conditionals should require boolean values");
+        assert_eq!(result.unwrap_err(), "Conditional expression `a` must evaluate to a Bool, got `not a bool` ");
+    }
+
+    #[test]
+    fn test_render_for_non_list() {
+        let tmpl = Template::parse("{% for i in items %}loop{% endfor %}").unwrap();
+        let ctx = ctx! { "items": 123 };
+        // Exposing bug: currently it skips silently, but should probably be an error.
+        assert!(render(&tmpl, ctx.as_ref()).is_err());
+    }
+
+    #[test]
+    fn test_render_fragment_missing() {
+        let tmpl = Template::parse("{{ Missing ctx }}").unwrap();
+        let ctx = ctx! { "ctx": {} };
+        assert!(render(&tmpl, ctx.as_ref()).is_err());
+    }
+
+    #[test]
+    fn test_render_fragment_wrong_ctx_type() {
+        let mut tmpl = Template::parse("{{ Frag ctx }}").unwrap();
+        tmpl.add_fragment("Frag", "hi").unwrap();
+        let ctx = ctx! { "ctx": 123 };
+        assert!(render(&tmpl, ctx.as_ref()).is_err());
+    }
+
+    #[test]
+    fn test_loop_scoping() {
+        let src = "{% for i in items %}{{ i }}{{ outer }}{% endfor %}";
+        let tmpl = Template::parse(src).unwrap();
+        let ctx = ctx! {
+            "outer": "!",
+            "items": [1, 2]
+        };
+        assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "1!2!");
     }
 }
