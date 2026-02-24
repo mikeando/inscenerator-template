@@ -139,3 +139,103 @@ fn parse_nodes(
 
     Ok(nodes)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_basic() {
+        let src = "Hello {{ name }}!";
+        let tmpl = Template::parse(src).unwrap();
+        assert_eq!(tmpl.nodes.len(), 3);
+    }
+
+    #[test]
+    fn test_parse_if_nested() {
+        let src = "{% if a %}{% if b %}inner{% endif %}{% else %}outer{% endif %}";
+        let tmpl = Template::parse(src).unwrap();
+        assert_eq!(tmpl.nodes.len(), 1);
+        if let Node::If {
+            branches,
+            else_body,
+        } = &tmpl.nodes[0]
+        {
+            assert_eq!(branches.len(), 1);
+            assert_eq!(branches[0].0, "a");
+            assert!(else_body.is_some());
+        } else {
+            panic!("Expected If node");
+        }
+    }
+
+    #[test]
+    fn test_parse_for() {
+        let src = "{% for i in items %}{{ i }}{% endfor %}";
+        let tmpl = Template::parse(src).unwrap();
+        assert_eq!(tmpl.nodes.len(), 1);
+        assert!(matches!(tmpl.nodes[0], Node::For { .. }));
+    }
+
+    #[test]
+    fn test_parse_mismatched_if_for() {
+        let src = "{% if a %}{% endfor %}";
+        assert!(Template::parse(src).is_err());
+    }
+
+    #[test]
+    fn test_parse_mismatched_for_if() {
+        let src = "{% for i in items %}{% endif %}";
+        assert!(Template::parse(src).is_err());
+    }
+
+    #[test]
+    fn test_parse_unexpected_else() {
+        let src = "{% else %}";
+        assert!(Template::parse(src).is_err());
+    }
+
+    #[test]
+    fn test_parse_unexpected_endif() {
+        let src = "{% endif %}";
+        assert!(Template::parse(src).is_err());
+    }
+
+    #[test]
+    fn test_add_fragment() {
+        let mut tmpl = Template::parse("").unwrap();
+        tmpl.add_fragment("Frag", "inside").unwrap();
+        assert!(tmpl.fragments.contains_key("Frag"));
+    }
+
+    #[test]
+    fn test_elif_after_else() {
+        let src = "{% if a %}A{% else %}B{% elif c %}C{% endif %}";
+        // The parser currently allows elif after else because of the loop structure,
+        // but it might lead to unexpected behavior or error.
+        // Let's see what it does.
+        let result = Template::parse(src);
+        // In current implementation:
+        // loop for elif/else:
+        //   match Else -> consume endif and BREAK.
+        // So anything after {% else %} but before its body is consumed...
+        // wait, parse_nodes is called for else body.
+        // Let's re-read parse_nodes for Else:
+        /*
+                        Some(Token::Else) => {
+                            iter.next();
+                            else_body = Some(parse_nodes(iter, true, in_for)?);
+                            // consume endif
+                            match iter.next() {
+                                Some(Token::EndIf) => {}
+                                _ => return Err("Expected {% endif %}".to_string()),
+                            }
+                            break;
+                        }
+        */
+        // It calls parse_nodes for the else body. If it sees {% elif %} inside the else body,
+        // it will be an error because in_if is true, and it breaks loop, then back in Else branch
+        // it expects EndIf but gets Elif.
+        assert!(result.is_err());
+    }
+}

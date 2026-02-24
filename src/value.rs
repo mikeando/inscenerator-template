@@ -129,3 +129,63 @@ impl From<Vec<Value>> for Value {
         Value::List(Arc::new(v))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_truthy() {
+        assert!(!Value::Null.is_truthy());
+        assert!(Value::Bool(true).is_truthy());
+        assert!(!Value::Bool(false).is_truthy());
+        assert!(Value::Int(1).is_truthy());
+        assert!(Value::Int(-1).is_truthy());
+        assert!(!Value::Int(0).is_truthy());
+        assert!(Value::Float(1.0).is_truthy());
+        assert!(Value::Float(-0.5).is_truthy());
+        assert!(!Value::Float(0.0).is_truthy());
+        assert!(Value::from("abc").is_truthy());
+        assert!(!Value::from("").is_truthy());
+        assert!(Value::from(vec![Value::Int(1)]).is_truthy());
+        assert!(!Value::from(vec![]).is_truthy());
+        assert!(Value::Map(context!()).is_truthy());
+    }
+
+    #[test]
+    fn test_render() {
+        assert_eq!(Value::Null.render(), "");
+        assert_eq!(Value::Bool(true).render(), "true");
+        assert_eq!(Value::Bool(false).render(), "false");
+        assert_eq!(Value::Int(123).render(), "123");
+        assert_eq!(Value::Float(1.23).render(), "1.23");
+        assert_eq!(Value::from("hello").render(), "hello");
+        assert_eq!(
+            Value::from(vec![Value::Int(1), Value::from("two")]).render(),
+            "1, two"
+        );
+        assert_eq!(Value::Map(context!()).render(), "[object]");
+    }
+
+    #[test]
+    fn test_get_path() {
+        let inner = context! { "a" => Value::Int(1) };
+        let outer = context! { "inner" => Value::Map(inner) };
+        let val = Value::Map(outer);
+
+        assert_eq!(val.get_path("inner.a").render(), "1");
+        assert!(matches!(val.get_path("inner.b"), Value::Null));
+        assert!(matches!(val.get_path("missing.a"), Value::Null));
+        assert!(matches!(val.get_path("inner.a.nothing"), Value::Null));
+    }
+
+    #[test]
+    fn test_from_impls() {
+        assert!(matches!(Value::from("hi"), Value::Str(_)));
+        assert!(matches!(Value::from("hi".to_string()), Value::Str(_)));
+        assert!(matches!(Value::from(10i64), Value::Int(10)));
+        assert!(matches!(Value::from(1.5f64), Value::Float(_)));
+        assert!(matches!(Value::from(true), Value::Bool(true)));
+        assert!(matches!(Value::from(vec![]), Value::List(_)));
+    }
+}

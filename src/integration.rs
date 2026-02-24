@@ -242,3 +242,87 @@ fn test_dotted_path() {
     };
     assert_eq!(render(&tmpl, &p).unwrap(), "London");
 }
+
+#[test]
+fn test_complex_nesting() {
+    let src = r#"
+        {% for category in categories %}
+            Category: {{ category.name }}
+            {% for product in category.products %}
+                - {{ product.name }} ({{ CurrencySymbol product }})
+            {% endfor %}
+        {% endfor %}
+    "#;
+    let mut tmpl = Template::parse(src).unwrap();
+    tmpl.add_fragment("CurrencySymbol", r#"{% if is_usd %}${% else %}€{% endif %}"#).unwrap();
+
+    let ctx = context! {
+        "categories" => Value::from(vec![
+            Value::Map(context! {
+                "name" => Value::from("Electronics"),
+                "products" => Value::from(vec![
+                    Value::Map(context! { "name" => Value::from("Phone"), "is_usd" => Value::from(true) }),
+                    Value::Map(context! { "name" => Value::from("Laptop"), "is_usd" => Value::from(false) }),
+                ])
+            })
+        ])
+    };
+
+    let output = render(&tmpl, ctx.as_ref()).unwrap();
+    assert!(output.contains("Category: Electronics"));
+    assert!(output.contains("- Phone ($)"));
+    assert!(output.contains("- Laptop (€)"));
+}
+
+#[test]
+fn test_utf8_integration() {
+    let src = "你好，{{ name }}！{% if happy %}😊{% endif %}";
+    let tmpl = Template::parse(src).unwrap();
+    let ctx = context! {
+        "name" => Value::from("世界"),
+        "happy" => Value::Bool(true)
+    };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "你好，世界！😊");
+}
+
+#[test]
+fn test_missing_variable_renders_empty() {
+    let tmpl = Template::parse("Before{{ missing }}After").unwrap();
+    let ctx = context! {};
+    // Exposing bug: currently missing variables render as empty string,
+    // but user wants them to be errors.
+    assert!(render(&tmpl, ctx.as_ref()).is_err());
+}
+
+#[test]
+fn test_whitespace_preservation() {
+    let src = "  {% if true %}  A  {% endif %}  ";
+    let tmpl = Template::parse(src).unwrap();
+    let ctx = context! {};
+    // current implementation preserves everything outside tags
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "    A    ");
+}
+
+#[test]
+fn test_invalid_expression_renders_empty() {
+    // Current eval() doesn't support errors, so it just does a lookup of the whole string.
+    // This should ideally be a parsing or evaluation error.
+    let tmpl = Template::parse("{{ a b c }}").unwrap();
+    let ctx = context! {};
+    assert!(render(&tmpl, ctx.as_ref()).is_err());
+}
+
+#[test]
+fn test_utf8_variable_names() {
+    let tmpl = Template::parse("{{ 名字 }}").unwrap();
+    let ctx = context! { "名字" => Value::from("张三") };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "张三");
+}
+
+// #[test]
+// fn test_deep_fragment_recursion() {
+//     let mut tmpl = Template::parse("{{ Recurse self }}").unwrap();
+//     tmpl.add_fragment("Recurse", "{{ Recurse self }}").unwrap();
+//     let ctx = context! { "self" => Value::Map(context!{}) };
+//     render(&tmpl, ctx.as_ref()).unwrap();
+// }

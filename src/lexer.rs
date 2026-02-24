@@ -152,3 +152,102 @@ fn parse_block(inner: &str) -> Result<Token, String> {
 
     Err(format!("Unknown block tag: `{}`", inner))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tokenize_basic() {
+        let src = "Hello {{ name }}!";
+        let tokens = tokenize(src).unwrap();
+        assert_eq!(tokens.len(), 3);
+        assert_eq!(tokens[0], Token::Text("Hello ".to_string()));
+        assert_eq!(tokens[1], Token::Output("name".to_string()));
+        assert_eq!(tokens[2], Token::Text("!".to_string()));
+    }
+
+    #[test]
+    fn test_tokenize_fragment() {
+        let src = "{{ Fragment arg }}";
+        let tokens = tokenize(src).unwrap();
+        assert_eq!(
+            tokens[0],
+            Token::FragmentCall {
+                fragment: "Fragment".to_string(),
+                ctx_expr: "arg".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_tokenize_blocks() {
+        let src = "{% if a %}A{% elif b %}B{% else %}C{% endif %}";
+        let tokens = tokenize(src).unwrap();
+        assert_eq!(tokens[0], Token::If("a".to_string()));
+        assert_eq!(tokens[1], Token::Text("A".to_string()));
+        assert_eq!(tokens[2], Token::Elif("b".to_string()));
+        assert_eq!(tokens[3], Token::Text("B".to_string()));
+        assert_eq!(tokens[4], Token::Else);
+        assert_eq!(tokens[5], Token::Text("C".to_string()));
+        assert_eq!(tokens[6], Token::EndIf);
+    }
+
+    #[test]
+    fn test_tokenize_for() {
+        let src = "{% for item in items %}...{% endfor %}";
+        let tokens = tokenize(src).unwrap();
+        assert_eq!(
+            tokens[0],
+            Token::For {
+                item: "item".to_string(),
+                list: "items".to_string()
+            }
+        );
+        assert_eq!(tokens[2], Token::EndFor);
+    }
+
+    #[test]
+    fn test_tokenize_unclosed() {
+        assert!(tokenize("{{ unclosed").is_err());
+        assert!(tokenize("{% unclosed").is_err());
+        assert!(tokenize("{# unclosed").is_err());
+    }
+
+    #[test]
+    fn test_tokenize_utf8() {
+        let src = "你好 {{ 名字 }}！";
+        let tokens = tokenize(src).unwrap();
+        assert_eq!(tokens[0], Token::Text("你好 ".to_string()));
+        assert_eq!(tokens[1], Token::Output("名字".to_string()));
+        assert_eq!(tokens[2], Token::Text("！".to_string()));
+    }
+
+    #[test]
+    fn test_parse_output_edge_cases() {
+        // Starts with uppercase but no space -> Output
+        assert!(matches!(parse_output("Fragment"), Token::Output(_)));
+        // Starts with uppercase and space -> FragmentCall
+        assert!(matches!(
+            parse_output("Fragment "),
+            Token::FragmentCall { .. }
+        ));
+        // Lowercase start -> Output
+        assert!(matches!(parse_output("fragment arg"), Token::Output(_)));
+    }
+
+    #[test]
+    fn test_parse_block_invalid() {
+        assert!(parse_block("unknown").is_err());
+        assert!(parse_block("for item items").is_err()); // missing 'in'
+    }
+
+    #[test]
+    fn test_comment() {
+        let src = "A{# comment #}B";
+        let tokens = tokenize(src).unwrap();
+        // Comment should be skipped, and text around it can be merged
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0], Token::Text("AB".to_string()));
+    }
+}

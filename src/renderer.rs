@@ -161,3 +161,85 @@ impl<'a> DataSource for LoopContext<'a> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context;
+
+    #[test]
+    fn test_eval_literals() {
+        let ctx = context! {};
+        assert_eq!(eval("true", ctx.as_ref()).render(), "true");
+        assert_eq!(eval("false", ctx.as_ref()).render(), "false");
+        assert_eq!(eval("null", ctx.as_ref()).render(), "");
+        assert_eq!(eval("123", ctx.as_ref()).render(), "123");
+        assert_eq!(eval("1.23", ctx.as_ref()).render(), "1.23");
+        assert_eq!(eval("\"hello\"", ctx.as_ref()).render(), "hello");
+        assert_eq!(eval("'world'", ctx.as_ref()).render(), "world");
+    }
+
+    #[test]
+    fn test_eval_negation() {
+        let ctx = context! { "flag" => Value::Bool(true) };
+        assert_eq!(eval("!flag", ctx.as_ref()).render(), "false");
+        assert_eq!(eval("!!flag", ctx.as_ref()).render(), "true");
+        assert_eq!(eval("!false", ctx.as_ref()).render(), "true");
+    }
+
+    #[test]
+    fn test_eval_dotted_path() {
+        let inner = context! { "a" => Value::Int(1) };
+        let ctx = context! { "inner" => Value::Map(inner) };
+        assert_eq!(eval("inner.a", ctx.as_ref()).render(), "1");
+        assert!(matches!(eval("inner.b", ctx.as_ref()), Value::Null));
+    }
+
+    #[test]
+    fn test_render_if() {
+        let tmpl = Template::parse("{% if a %}A{% elif b %}B{% else %}C{% endif %}").unwrap();
+
+        let ctx_a = context! { "a" => Value::Bool(true) };
+        assert_eq!(render(&tmpl, ctx_a.as_ref()).unwrap(), "A");
+
+        let ctx_b = context! { "a" => Value::Bool(false), "b" => Value::Bool(true) };
+        assert_eq!(render(&tmpl, ctx_b.as_ref()).unwrap(), "B");
+
+        let ctx_c = context! { "a" => Value::Bool(false), "b" => Value::Bool(false) };
+        assert_eq!(render(&tmpl, ctx_c.as_ref()).unwrap(), "C");
+    }
+
+    #[test]
+    fn test_render_for_non_list() {
+        let tmpl = Template::parse("{% for i in items %}loop{% endfor %}").unwrap();
+        let ctx = context! { "items" => Value::Int(123) };
+        // Exposing bug: currently it skips silently, but should probably be an error.
+        assert!(render(&tmpl, ctx.as_ref()).is_err());
+    }
+
+    #[test]
+    fn test_render_fragment_missing() {
+        let tmpl = Template::parse("{{ Missing ctx }}").unwrap();
+        let ctx = context! { "ctx" => Value::Map(context!{}) };
+        assert!(render(&tmpl, ctx.as_ref()).is_err());
+    }
+
+    #[test]
+    fn test_render_fragment_wrong_ctx_type() {
+        let mut tmpl = Template::parse("{{ Frag ctx }}").unwrap();
+        tmpl.add_fragment("Frag", "hi").unwrap();
+        let ctx = context! { "ctx" => Value::Int(123) };
+        assert!(render(&tmpl, ctx.as_ref()).is_err());
+    }
+
+    #[test]
+    fn test_loop_scoping() {
+        let src = "{% for i in items %}{{ i }}{{ outer }}{% endfor %}";
+        let tmpl = Template::parse(src).unwrap();
+        let ctx = context! {
+            "outer" => Value::from("!"),
+            "items" => Value::from(vec![Value::Int(1), Value::Int(2)])
+        };
+        assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "1!2!");
+    }
+}
