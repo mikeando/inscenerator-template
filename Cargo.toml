@@ -1,6 +1,12 @@
 [package]
 name = "inscenerator-template"
 version = "0.1.0"
+authors = ["Michael Anderson <drmikeando@gmail.com>"]
 edition = "2024"
+license = "MIT"
+description = "Type-driven text templating engine for Inscenerator"
+homepage = "https://github.com/mikeando/inscenerator-template"
+repository = "https://github.com/mikeando/inscenerator-template"
+readme = "README.md"
 
 [dependencies]
