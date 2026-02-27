@@ -38,35 +38,78 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, String> {
     let mut tokens = Vec::new();
     let mut chars = src.char_indices().peekable();
     let mut text_buf = String::new();
+    // When true, strip leading whitespace from the next run of literal text.
+    // Set by a right-trim marker: `{{ expr -}}` / `{% tag -%}` / `{# ... -#}`.
+    let mut trim_next = false;
 
     while let Some((_i, c)) = chars.next() {
         if c == '{' {
             match chars.peek().map(|(_, c)| *c) {
-                Some('{') => {
-                    chars.next();
-                    if !text_buf.is_empty() {
-                        tokens.push(Token::Text(std::mem::take(&mut text_buf)));
+                Some('{') | Some('%') | Some('#') => {
+                    let delimiter = chars.peek().map(|(_, c)| *c).unwrap();
+                    chars.next(); // consume '{', '%', or '#'
+
+                    // Left-trim marker: `{{-` / `{%-` / `{#-`
+                    let left_trim = chars.peek().map(|(_, c)| *c) == Some('-');
+                    if left_trim {
+                        chars.next(); // consume '-'
                     }
-                    let inner = read_until(&mut chars, "}}")?;
-                    let trimmed = inner.trim();
-                    tokens.push(parse_output(trimmed));
-                }
-                Some('%') => {
-                    chars.next();
-                    if !text_buf.is_empty() {
-                        tokens.push(Token::Text(std::mem::take(&mut text_buf)));
+
+                    let is_comment = delimiter == '#';
+
+                    // Flush the accumulated text, honouring the left-trim.
+                    // Comments without left-trim are truly invisible: we do NOT
+                    // flush the buffer so that "A{# ... #}B" yields Text("AB").
+                    if !is_comment || left_trim {
+                        if left_trim {
+                            let trimmed = text_buf.trim_end().to_string();
+                            text_buf.clear();
+                            if !trimmed.is_empty() {
+                                tokens.push(Token::Text(trimmed));
+                            }
+                        } else if !text_buf.is_empty() {
+                            tokens.push(Token::Text(std::mem::take(&mut text_buf)));
+                        }
                     }
-                    let inner = read_until(&mut chars, "%}")?;
-                    tokens.push(parse_block(inner.trim())?);
-                }
-                Some('#') => {
-                    chars.next();
-                    // comment — consume until #}
-                    read_until(&mut chars, "#}")?;
+
+                    let end_delim = match delimiter {
+                        '{' => "}}",
+                        '%' => "%}",
+                        _ => "#}",
+                    };
+                    let inner = read_until(&mut chars, end_delim)?;
+
+                    // Right-trim marker: `-}}` / `-%}` / `-#}`
+                    let (inner, right_trim) = if inner.ends_with('-') {
+                        (&inner[..inner.len() - 1], true)
+                    } else {
+                        (inner.as_str(), false)
+                    };
+
+                    let inner = inner.trim();
+
+                    match delimiter {
+                        '{' => tokens.push(parse_output(inner)),
+                        '%' => tokens.push(parse_block(inner)?),
+                        _ => {} // comment — discard
+                    }
+
+                    trim_next = right_trim;
                 }
                 _ => {
+                    // '{' not starting a tag — treat as literal text.
+                    // A non-whitespace character ends any active right-trim.
+                    if trim_next {
+                        trim_next = false;
+                    }
                     text_buf.push(c);
                 }
+            }
+        } else if trim_next {
+            // Skip leading whitespace after a right-trim marker.
+            if !c.is_whitespace() {
+                trim_next = false;
+                text_buf.push(c);
             }
         } else {
             text_buf.push(c);

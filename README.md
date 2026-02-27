@@ -13,6 +13,8 @@ A lightweight Rust text templating engine where your own types drive rendering �
 | `{% else %}` | Else branch |
 | `{% for item in list %}...{% endfor %}` | Loop over a `Value::List` |
 | `{# comment #}` | Ignored |
+| `{{- expr }}` / `{{ expr -}}` | Output, stripping whitespace before / after |
+| `{%- tag %}` / `{% tag -%}` | Block tag, stripping whitespace before / after |
 
 Expressions support dotted paths (`user.address.city`), negation (`!flag`), comparison operators (`==`, `!=`, `<`, `>`, `<=`, `>=`), boolean operators (`and`/`or` or `&&`/`||`), function calls (`ends_with(name, ".rs")`), and literals (`true`, `false`, `null`, integers, floats, `"strings"`, `'strings'`). All expressions are parsed at `Template::parse()` time — invalid expressions are caught immediately, not at render time.
 
@@ -199,14 +201,45 @@ Each element of the resulting list is a `Map` with keys `"index"` and `"value"`.
 {# Inside Row: {{ index }} and {{ value.name }} — not e.index / e.value #}
 ```
 
+## Whitespace control
+
+By default every character in the template — including newlines around block tags — is emitted literally. Add a `-` on the *inside* of any tag delimiter to strip adjacent whitespace from the neighbouring text:
+
+| Marker | Effect |
+|--------|--------|
+| `{{- expr }}` | strip whitespace **before** the output tag |
+| `{{ expr -}}` | strip whitespace **after** the output tag |
+| `{%- tag %}` | strip whitespace **before** the block tag |
+| `{% tag -%}` | strip whitespace **after** the block tag |
+| `{#- comment -#}` | strip whitespace on both sides of a comment |
+
+Both sides can be combined on the same tag. "Whitespace" means any run of spaces, tabs, and newlines.
+
+**Typical use — remove the newline that follows a block tag:**
+
+```
+{%- for item in items -%}
+{{ item }},
+{% endfor -%}
+```
+
+The `-%}` after `for` eats the newline that would otherwise appear before the first item; the `{%-` before `endfor` eats the newline after the last item's body.
+
+**Strip whitespace around an inline output:**
+
+```
+Size: {{- len(items) -}} items
+```
+
 ## Examples
 
 ```
-cargo run --example report          # Employee report: DataSource on Rust structs
-cargo run --example changelog       # Changelog: ctx! macro, string functions, custom functions
-cargo run --example string_builtins # upper/lower/trim/replace for slug and label generation
-cargo run --example boolean_ops     # and/or operators for role/permission logic
-cargo run --example enumerate       # enumerate() for numbered lists and position-aware rendering
+cargo run --example report              # Employee report: DataSource on Rust structs
+cargo run --example changelog           # Changelog: ctx! macro, string functions, custom functions
+cargo run --example string_builtins     # upper/lower/trim/replace for slug and label generation
+cargo run --example boolean_ops         # and/or operators for role/permission logic
+cargo run --example enumerate           # enumerate() for numbered lists and position-aware rendering
+cargo run --example whitespace_control  # {{-, -}}, {%-, -%} to trim whitespace around tags
 ```
 
 ## Architecture
@@ -221,9 +254,10 @@ src/
   renderer.rs    — AST walker, eval(), apply_binop(), LoopContext, fragment dispatch
   integration.rs — end-to-end tests (compiled only under #[cfg(test)])
 examples/
-  report.rs          — employee report using DataSource on Rust structs
-  changelog.rs       — changelog generator using ctx! macro and custom functions
-  string_builtins.rs — upper/lower/trim/replace for slug and label normalisation
-  boolean_ops.rs     — and/or operators for role/permission logic in fragments
-  enumerate.rs       — enumerate() for numbered lists and position-aware rendering
+  report.rs               — employee report using DataSource on Rust structs
+  changelog.rs            — changelog generator using ctx! macro and custom functions
+  string_builtins.rs      — upper/lower/trim/replace for slug and label normalisation
+  boolean_ops.rs          — and/or operators for role/permission logic in fragments
+  enumerate.rs            — enumerate() for numbered lists and position-aware rendering
+  whitespace_control.rs   — {{-, -}}, {%-, -%} markers for compact output
 ```
