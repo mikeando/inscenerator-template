@@ -183,6 +183,32 @@ fn make_builtins() -> HashMap<String, Arc<dyn Function>> {
         }),
     );
 
+    fns.insert(
+        "enumerate".to_string(),
+        Arc::new(|args: &[Value]| -> Result<Value, String> {
+            match args {
+                [Value::List(list)] => {
+                    let result: Vec<Value> = list
+                        .iter()
+                        .enumerate()
+                        .map(|(i, v)| {
+                            let mut map = HashMap::new();
+                            map.insert("index".to_string(), Value::Int(i as i64));
+                            map.insert("value".to_string(), v.clone());
+                            Value::Map(map)
+                        })
+                        .collect();
+                    Ok(Value::List(Arc::new(result)))
+                }
+                [_] => Err("enumerate() expects a List argument".to_string()),
+                _ => Err(format!(
+                    "enumerate() expects 1 argument, got {}",
+                    args.len()
+                )),
+            }
+        }),
+    );
+
     fns
 }
 

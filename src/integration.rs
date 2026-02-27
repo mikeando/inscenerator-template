@@ -759,3 +759,79 @@ fn test_and_keyword_cannot_be_variable() {
 fn test_or_keyword_cannot_be_variable() {
     assert!(Template::parse("{{ or }}").is_err());
 }
+
+// --- enumerate() built-in ---
+
+#[test]
+fn test_enumerate_indices() {
+    // index starts at 0 and increments
+    let tmpl = Template::parse("{% for e in enumerate(items) %}{{ e.index }}{% endfor %}").unwrap();
+    let ctx = ctx! { "items": ["a", "b", "c"] };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "012");
+}
+
+#[test]
+fn test_enumerate_values() {
+    // original values are accessible via e.value
+    let tmpl =
+        Template::parse("{% for e in enumerate(items) %}{{ e.value }}{% endfor %}").unwrap();
+    let ctx = ctx! { "items": ["x", "y", "z"] };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "xyz");
+}
+
+#[test]
+fn test_enumerate_index_and_value() {
+    let tmpl =
+        Template::parse("{% for e in enumerate(items) %}{{ e.index }}:{{ e.value }} {% endfor %}")
+            .unwrap();
+    let ctx = ctx! { "items": ["a", "b", "c"] };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "0:a 1:b 2:c ");
+}
+
+#[test]
+fn test_enumerate_nested_map_value() {
+    // Works with list-of-maps: e.value.name
+    let tmpl =
+        Template::parse("{% for e in enumerate(items) %}{{ e.index }}.{{ e.value.name }} {% endfor %}")
+            .unwrap();
+    let ctx = ctx! {
+        "items": [
+            { "name": "Alice" },
+            { "name": "Bob" }
+        ]
+    };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "0.Alice 1.Bob ");
+}
+
+#[test]
+fn test_enumerate_last_item_check() {
+    // Common use-case: suppress trailing comma on last item using index comparison
+    let tmpl = Template::parse(
+        "{% for e in enumerate(items) %}{{ e.value }}{% if e.index < 2 %},{% endif %}{% endfor %}",
+    )
+    .unwrap();
+    let ctx = ctx! { "items": ["a", "b", "c"] };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "a,b,c");
+}
+
+#[test]
+fn test_enumerate_empty_list() {
+    let tmpl =
+        Template::parse("{% for e in enumerate(items) %}x{% endfor %}nothing").unwrap();
+    let ctx = ctx! { "items": [] };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "nothing");
+}
+
+#[test]
+fn test_enumerate_wrong_type() {
+    let tmpl = Template::parse("{{ enumerate(name) }}").unwrap();
+    let ctx = ctx! { "name": "Alice" };
+    assert!(render(&tmpl, ctx.as_ref()).is_err());
+}
+
+#[test]
+fn test_enumerate_wrong_arg_count() {
+    let tmpl = Template::parse("{{ enumerate(a, b) }}").unwrap();
+    let ctx = ctx! { "a": ["x"], "b": ["y"] };
+    assert!(render(&tmpl, ctx.as_ref()).is_err());
+}
