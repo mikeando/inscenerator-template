@@ -210,6 +210,79 @@ fn apply_binop(op: &BinOp, lhs: Value, rhs: Value) -> Result<Value, String> {
             )),
         },
 
+        BinOp::Add => match (&lhs, &rhs) {
+            (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a + b)),
+            (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a + b)),
+            (Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 + b)),
+            (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a + *b as f64)),
+            (Value::Str(a), Value::Str(b)) => Ok(Value::Str(format!("{}{}", a, b))),
+            _ => Err(format!(
+                "`+` operator: incompatible types `{}` and `{}`",
+                lhs.render(),
+                rhs.render()
+            )),
+        },
+
+        BinOp::Sub => match (&lhs, &rhs) {
+            (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a - b)),
+            (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a - b)),
+            (Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 - b)),
+            (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a - *b as f64)),
+            _ => Err(format!(
+                "`-` operator requires numeric operands, got `{}` and `{}`",
+                lhs.render(),
+                rhs.render()
+            )),
+        },
+
+        BinOp::Mul => match (&lhs, &rhs) {
+            (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a * b)),
+            (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a * b)),
+            (Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 * b)),
+            (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a * *b as f64)),
+            _ => Err(format!(
+                "`*` operator requires numeric operands, got `{}` and `{}`",
+                lhs.render(),
+                rhs.render()
+            )),
+        },
+
+        BinOp::Div => match (&lhs, &rhs) {
+            (Value::Int(_), Value::Int(0)) => Err("Division by zero".to_string()),
+            (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a / b)),
+            (Value::Float(a), Value::Float(b)) => {
+                if *b == 0.0 {
+                    Err("Division by zero".to_string())
+                } else {
+                    Ok(Value::Float(a / b))
+                }
+            }
+            (Value::Int(a), Value::Float(b)) => {
+                if *b == 0.0 {
+                    Err("Division by zero".to_string())
+                } else {
+                    Ok(Value::Float(*a as f64 / b))
+                }
+            }
+            (Value::Float(_), Value::Int(0)) => Err("Division by zero".to_string()),
+            (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a / *b as f64)),
+            _ => Err(format!(
+                "`/` operator requires numeric operands, got `{}` and `{}`",
+                lhs.render(),
+                rhs.render()
+            )),
+        },
+
+        BinOp::Mod => match (&lhs, &rhs) {
+            (Value::Int(_), Value::Int(0)) => Err("Modulo by zero".to_string()),
+            (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a % b)),
+            _ => Err(format!(
+                "`%` operator requires integer operands, got `{}` and `{}`",
+                lhs.render(),
+                rhs.render()
+            )),
+        },
+
         BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
             let cmp = match (&lhs, &rhs) {
                 (Value::Int(a), Value::Int(b)) => a.cmp(b),

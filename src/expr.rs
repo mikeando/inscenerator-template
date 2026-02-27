@@ -30,6 +30,11 @@ pub enum BinOp {
     Ge,
     And,
     Or,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
 }
 
 impl fmt::Display for BinOp {
@@ -43,6 +48,11 @@ impl fmt::Display for BinOp {
             BinOp::Ge => write!(f, ">="),
             BinOp::And => write!(f, "and"),
             BinOp::Or => write!(f, "or"),
+            BinOp::Add => write!(f, "+"),
+            BinOp::Sub => write!(f, "-"),
+            BinOp::Mul => write!(f, "*"),
+            BinOp::Div => write!(f, "/"),
+            BinOp::Mod => write!(f, "%"),
         }
     }
 }
@@ -227,6 +237,26 @@ fn tokenize_expr(input: &str) -> Result<Vec<ExprToken>, String> {
                     return Err("Unexpected '|' — did you mean '||'?".to_string());
                 }
             }
+            '+' => {
+                tokens.push(ExprToken::Op("+".to_string()));
+                i += 1;
+            }
+            '-' => {
+                tokens.push(ExprToken::Op("-".to_string()));
+                i += 1;
+            }
+            '*' => {
+                tokens.push(ExprToken::Op("*".to_string()));
+                i += 1;
+            }
+            '/' => {
+                tokens.push(ExprToken::Op("/".to_string()));
+                i += 1;
+            }
+            '%' => {
+                tokens.push(ExprToken::Op("%".to_string()));
+                i += 1;
+            }
             other => return Err(format!("Unexpected character '{}' in expression", other)),
         }
     }
@@ -288,7 +318,7 @@ impl Parser {
     }
 
     fn parse_comparison(&mut self) -> Result<Expr, String> {
-        let lhs = self.parse_unary()?;
+        let lhs = self.parse_additive()?;
 
         let op = match self.peek() {
             Some(ExprToken::Op(s)) => match s.as_str() {
@@ -298,18 +328,57 @@ impl Parser {
                 ">=" => BinOp::Ge,
                 "<" => BinOp::Lt,
                 ">" => BinOp::Gt,
-                _ => return Ok(lhs), // "!" is unary, not binary
+                _ => return Ok(lhs),
             },
             _ => return Ok(lhs),
         };
 
         self.next_token(); // consume the op token
-        let rhs = self.parse_unary()?;
+        let rhs = self.parse_additive()?;
         Ok(Expr::BinOp {
             op,
             lhs: Box::new(lhs),
             rhs: Box::new(rhs),
         })
+    }
+
+    fn parse_additive(&mut self) -> Result<Expr, String> {
+        let mut lhs = self.parse_multiplicative()?;
+        loop {
+            let op = match self.peek() {
+                Some(ExprToken::Op(s)) if s == "+" => BinOp::Add,
+                Some(ExprToken::Op(s)) if s == "-" => BinOp::Sub,
+                _ => break,
+            };
+            self.next_token();
+            let rhs = self.parse_multiplicative()?;
+            lhs = Expr::BinOp {
+                op,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            };
+        }
+        Ok(lhs)
+    }
+
+    fn parse_multiplicative(&mut self) -> Result<Expr, String> {
+        let mut lhs = self.parse_unary()?;
+        loop {
+            let op = match self.peek() {
+                Some(ExprToken::Op(s)) if s == "*" => BinOp::Mul,
+                Some(ExprToken::Op(s)) if s == "/" => BinOp::Div,
+                Some(ExprToken::Op(s)) if s == "%" => BinOp::Mod,
+                _ => break,
+            };
+            self.next_token();
+            let rhs = self.parse_unary()?;
+            lhs = Expr::BinOp {
+                op,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            };
+        }
+        Ok(lhs)
     }
 
     fn parse_unary(&mut self) -> Result<Expr, String> {
@@ -320,11 +389,37 @@ impl Parser {
             let e = self.parse_unary()?;
             return Ok(Expr::Not(Box::new(e)));
         }
+        // Unary minus: represent as (0 - x)
+        if let Some(ExprToken::Op(s)) = self.peek()
+            && s == "-"
+        {
+            self.next_token();
+            let e = self.parse_unary()?;
+            return Ok(Expr::BinOp {
+                op: BinOp::Sub,
+                lhs: Box::new(Expr::Literal(Value::Int(0))),
+                rhs: Box::new(e),
+            });
+        }
         self.parse_primary()
     }
 
     fn parse_primary(&mut self) -> Result<Expr, String> {
         match self.peek() {
+            // Grouped expression: ( expr )
+            Some(ExprToken::LParen) => {
+                self.next_token(); // consume '('
+                let e = self.parse_expr()?;
+                match self.next_token() {
+                    Some(ExprToken::RParen) => return Ok(e),
+                    other => {
+                        return Err(format!(
+                            "Expected ')' to close grouped expression, got {:?}",
+                            other
+                        ));
+                    }
+                }
+            }
             Some(ExprToken::Int(_)) => {
                 if let Some(ExprToken::Int(n)) = self.next_token() {
                     Ok(Expr::Literal(Value::Int(n)))
@@ -707,7 +802,8 @@ mod tests {
 
     #[test]
     fn test_error_bad_char() {
-        assert!(parse_expr("a + b").is_err());
+        assert!(parse_expr("a @ b").is_err());
+        assert!(parse_expr("a # b").is_err());
     }
 
     #[test]

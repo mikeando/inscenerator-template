@@ -16,7 +16,29 @@ A lightweight Rust text templating engine where your own types drive rendering �
 | `{{- expr }}` / `{{ expr -}}` | Output, stripping whitespace before / after |
 | `{%- tag %}` / `{% tag -%}` | Block tag, stripping whitespace before / after |
 
-Expressions support dotted paths (`user.address.city`), negation (`!flag`), comparison operators (`==`, `!=`, `<`, `>`, `<=`, `>=`), boolean operators (`and`/`or` or `&&`/`||`), function calls (`ends_with(name, ".rs")`), and literals (`true`, `false`, `null`, integers, floats, `"strings"`, `'strings'`). All expressions are parsed at `Template::parse()` time — invalid expressions are caught immediately, not at render time.
+Expressions support dotted paths (`user.address.city`), negation (`!flag`), arithmetic (`+`, `-`, `*`, `/`, `%`), comparison (`==`, `!=`, `<`, `>`, `<=`, `>=`), boolean operators (`and`/`or` or `&&`/`||`), function calls (`ends_with(name, ".rs")`), parenthesised grouping (`(a + b) * c`), and literals (`true`, `false`, `null`, integers, floats, `"strings"`, `'strings'`). All expressions are parsed at `Template::parse()` time — invalid expressions are caught immediately, not at render time.
+
+### Arithmetic operators
+
+| Operator | LHS / RHS | Result | Notes |
+|----------|-----------|--------|-------|
+| `+` | `Int`, `Float` (mixed ok) | `Int` or `Float` | Also `Str + Str` → concatenation |
+| `-` | `Int`, `Float` (mixed ok) | `Int` or `Float` | Unary `-x` is also supported |
+| `*` | `Int`, `Float` (mixed ok) | `Int` or `Float` | |
+| `/` | `Int`, `Float` (mixed ok) | `Int` or `Float` | `Int / Int` truncates; errors on divide-by-zero |
+| `%` | `Int`, `Int` | `Int` | Errors on modulo-by-zero |
+
+Precedence (high → low): unary `-` → `*` `/` `%` → `+` `-` → comparisons → `and`/`or`.
+Use `( expr )` to group sub-expressions.
+
+```
+{{ price * qty }}
+{{ total / count }}
+{{ index % 2 == 0 }}
+{{ first + ' ' + last }}
+{{ (a + b) * c }}
+{{ -offset + base }}
+```
 
 ### Comparison operators
 
@@ -240,6 +262,7 @@ cargo run --example string_builtins     # upper/lower/trim/replace for slug and 
 cargo run --example boolean_ops         # and/or operators for role/permission logic
 cargo run --example enumerate           # enumerate() for numbered lists and position-aware rendering
 cargo run --example whitespace_control  # {{-, -}}, {%-, -%} to trim whitespace around tags
+cargo run --example arithmetic          # +, -, *, /, % operators and parenthesised grouping
 ```
 
 ## Architecture
@@ -260,4 +283,5 @@ examples/
   boolean_ops.rs          — and/or operators for role/permission logic in fragments
   enumerate.rs            — enumerate() for numbered lists and position-aware rendering
   whitespace_control.rs   — {{-, -}}, {%-, -%} markers for compact output
+  arithmetic.rs           — +, -, *, /, % operators and parenthesised grouping
 ```
