@@ -14,7 +14,7 @@ A lightweight Rust text templating engine where your own types drive rendering �
 | `{% for item in list %}...{% endfor %}` | Loop over a `Value::List` |
 | `{# comment #}` | Ignored |
 
-Expressions support dotted paths (`user.address.city`), negation (`!flag`), comparison operators (`==`, `!=`, `<`, `>`, `<=`, `>=`), function calls (`ends_with(name, ".rs")`), and literals (`true`, `false`, `null`, integers, floats, `"strings"`, `'strings'`). All expressions are parsed at `Template::parse()` time — invalid expressions are caught immediately, not at render time.
+Expressions support dotted paths (`user.address.city`), negation (`!flag`), comparison operators (`==`, `!=`, `<`, `>`, `<=`, `>=`), boolean operators (`and`/`or` or `&&`/`||`), function calls (`ends_with(name, ".rs")`), and literals (`true`, `false`, `null`, integers, floats, `"strings"`, `'strings'`). All expressions are parsed at `Template::parse()` time — invalid expressions are caught immediately, not at render time.
 
 ### Comparison operators
 
@@ -23,7 +23,19 @@ Expressions support dotted paths (`user.address.city`), negation (`!flag`), comp
 | `==`, `!=` | `Int`, `Float`, `Str`, `Bool`, `Null` | `Int`/`Float` coerce automatically |
 | `<`, `>`, `<=`, `>=` | `Int`, `Float` only | Error on strings, bools, etc. |
 
+### Boolean operators
+
+`and` / `or` (or `&&` / `||`) combine `Bool` expressions. Both operands must evaluate to `Bool`. Operators chain left-to-right and bind looser than comparisons, so `a == b and c == d` works as expected.
+
+```
+{% if role == 'admin' or role == 'editor' %}can edit{% endif %}
+{% if active and verified %}[verified]{% endif %}
+{% if a and b and c %}all three{% endif %}
+```
+
 ### Built-in functions
+
+#### String testing
 
 | Function | Signature | Returns |
 |----------|-----------|---------|
@@ -32,9 +44,26 @@ Expressions support dotted paths (`user.address.city`), negation (`!flag`), comp
 | `ends_with` | `Str`, `Str` | `Bool` |
 | `contains` | `Str`, `Str` | `Bool` |
 
+#### String transformation
+
+| Function | Signature | Returns |
+|----------|-----------|---------|
+| `upper(s)` | `Str` | `Str` — Unicode uppercase |
+| `lower(s)` | `Str` | `Str` — Unicode lowercase |
+| `trim(s)` | `Str` | `Str` — strips leading and trailing whitespace |
+| `replace(s, from, to)` | `Str`, `Str`, `Str` | `Str` — replaces all occurrences of `from` with `to` |
+
+#### List utilities
+
+| Function | Signature | Returns |
+|----------|-----------|---------|
+| `enumerate(list)` | `List` | `List` of `Map`s with keys `"index"` (`Int`) and `"value"` (original item) |
+
 ```
 {% if ends_with(filename, '.rs') %}Rust file{% endif %}
 {% if len(items) > 0 %}Has items{% endif %}
+{{ upper(trim(title)) }}
+{{ replace(slug, '-', ' ') }}
 ```
 
 ### Custom functions
@@ -155,11 +184,29 @@ let src = "{% for p in products %}{{ ProductView p }}{% endfor %}";
 
 The loop variable overlays the parent context, so outer variables remain accessible inside the loop body.
 
+### Loop position with `enumerate`
+
+Use `enumerate(list)` to get the 0-based index alongside each item:
+
+```
+{% for e in enumerate(items) %}{{ e.index }}: {{ e.value }} {% endfor %}
+```
+
+Each element of the resulting list is a `Map` with keys `"index"` and `"value"`. When passing one to a fragment, the keys are promoted to the fragment's top-level context:
+
+```
+{% for e in enumerate(items) %}{{ Row e }}{% endfor %}
+{# Inside Row: {{ index }} and {{ value.name }} — not e.index / e.value #}
+```
+
 ## Examples
 
 ```
-cargo run --example report     # Employee report: DataSource on Rust structs
-cargo run --example changelog  # Changelog: ctx! macro, string functions, custom functions
+cargo run --example report          # Employee report: DataSource on Rust structs
+cargo run --example changelog       # Changelog: ctx! macro, string functions, custom functions
+cargo run --example string_builtins # upper/lower/trim/replace for slug and label generation
+cargo run --example boolean_ops     # and/or operators for role/permission logic
+cargo run --example enumerate       # enumerate() for numbered lists and position-aware rendering
 ```
 
 ## Architecture
@@ -174,6 +221,9 @@ src/
   renderer.rs    — AST walker, eval(), apply_binop(), LoopContext, fragment dispatch
   integration.rs — end-to-end tests (compiled only under #[cfg(test)])
 examples/
-  report.rs      — employee report using DataSource on Rust structs
-  changelog.rs   — changelog generator using ctx! macro and custom functions
+  report.rs          — employee report using DataSource on Rust structs
+  changelog.rs       — changelog generator using ctx! macro and custom functions
+  string_builtins.rs — upper/lower/trim/replace for slug and label normalisation
+  boolean_ops.rs     — and/or operators for role/permission logic in fragments
+  enumerate.rs       — enumerate() for numbered lists and position-aware rendering
 ```
