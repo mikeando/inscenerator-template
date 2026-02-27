@@ -654,3 +654,108 @@ fn test_builtin_replace_wrong_arg_count() {
     let ctx = ctx! { "text": "a-b" };
     assert!(render(&tmpl, ctx.as_ref()).is_err());
 }
+
+// --- Boolean and / or operators ---
+
+#[test]
+fn test_and_both_true() {
+    let tmpl = Template::parse("{% if a and b %}yes{% else %}no{% endif %}").unwrap();
+    let ctx = ctx! { "a": true, "b": true };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "yes");
+}
+
+#[test]
+fn test_and_one_false() {
+    let tmpl = Template::parse("{% if a and b %}yes{% else %}no{% endif %}").unwrap();
+    let ctx = ctx! { "a": true, "b": false };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "no");
+}
+
+#[test]
+fn test_and_both_false() {
+    let tmpl = Template::parse("{% if a and b %}yes{% else %}no{% endif %}").unwrap();
+    let ctx = ctx! { "a": false, "b": false };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "no");
+}
+
+#[test]
+fn test_or_both_false() {
+    let tmpl = Template::parse("{% if a or b %}yes{% else %}no{% endif %}").unwrap();
+    let ctx = ctx! { "a": false, "b": false };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "no");
+}
+
+#[test]
+fn test_or_one_true() {
+    let tmpl = Template::parse("{% if a or b %}yes{% else %}no{% endif %}").unwrap();
+    let ctx = ctx! { "a": false, "b": true };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "yes");
+}
+
+#[test]
+fn test_symbolic_and() {
+    let tmpl = Template::parse("{% if a && b %}yes{% else %}no{% endif %}").unwrap();
+    let ctx = ctx! { "a": true, "b": true };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "yes");
+}
+
+#[test]
+fn test_symbolic_or() {
+    let tmpl = Template::parse("{% if a || b %}yes{% else %}no{% endif %}").unwrap();
+    let ctx = ctx! { "a": false, "b": true };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "yes");
+}
+
+#[test]
+fn test_and_with_comparisons() {
+    // Compound condition: role == "admin" and active
+    let tmpl = Template::parse(
+        "{% if role == 'admin' and active %}allowed{% else %}denied{% endif %}",
+    )
+    .unwrap();
+    let ctx = ctx! { "role": "admin", "active": true };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "allowed");
+    let ctx2 = ctx! { "role": "admin", "active": false };
+    assert_eq!(render(&tmpl, ctx2.as_ref()).unwrap(), "denied");
+    let ctx3 = ctx! { "role": "guest", "active": true };
+    assert_eq!(render(&tmpl, ctx3.as_ref()).unwrap(), "denied");
+}
+
+#[test]
+fn test_or_with_comparisons() {
+    let tmpl = Template::parse(
+        "{% if role == 'admin' or role == 'editor' %}yes{% else %}no{% endif %}",
+    )
+    .unwrap();
+    let ctx = ctx! { "role": "editor" };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "yes");
+    let ctx2 = ctx! { "role": "viewer" };
+    assert_eq!(render(&tmpl, ctx2.as_ref()).unwrap(), "no");
+}
+
+#[test]
+fn test_chained_and() {
+    let tmpl =
+        Template::parse("{% if a and b and c %}yes{% else %}no{% endif %}").unwrap();
+    let ctx = ctx! { "a": true, "b": true, "c": true };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "yes");
+    let ctx2 = ctx! { "a": true, "b": false, "c": true };
+    assert_eq!(render(&tmpl, ctx2.as_ref()).unwrap(), "no");
+}
+
+#[test]
+fn test_and_non_bool_error() {
+    let tmpl = Template::parse("{% if a and b %}yes{% endif %}").unwrap();
+    let ctx = ctx! { "a": true, "b": 42 };
+    assert!(render(&tmpl, ctx.as_ref()).is_err());
+}
+
+#[test]
+fn test_and_keyword_cannot_be_variable() {
+    assert!(Template::parse("{{ and }}").is_err());
+}
+
+#[test]
+fn test_or_keyword_cannot_be_variable() {
+    assert!(Template::parse("{{ or }}").is_err());
+}

@@ -28,6 +28,8 @@ pub enum BinOp {
     Le,
     Gt,
     Ge,
+    And,
+    Or,
 }
 
 impl fmt::Display for BinOp {
@@ -39,6 +41,8 @@ impl fmt::Display for BinOp {
             BinOp::Le => write!(f, "<="),
             BinOp::Gt => write!(f, ">"),
             BinOp::Ge => write!(f, ">="),
+            BinOp::And => write!(f, "and"),
+            BinOp::Or => write!(f, "or"),
         }
     }
 }
@@ -207,6 +211,22 @@ fn tokenize_expr(input: &str) -> Result<Vec<ExprToken>, String> {
                     i += 1;
                 }
             }
+            '&' => {
+                if i + 1 < chars.len() && chars[i + 1] == '&' {
+                    tokens.push(ExprToken::Op("&&".to_string()));
+                    i += 2;
+                } else {
+                    return Err("Unexpected '&' — did you mean '&&'?".to_string());
+                }
+            }
+            '|' => {
+                if i + 1 < chars.len() && chars[i + 1] == '|' {
+                    tokens.push(ExprToken::Op("||".to_string()));
+                    i += 2;
+                } else {
+                    return Err("Unexpected '|' — did you mean '||'?".to_string());
+                }
+            }
             other => return Err(format!("Unexpected character '{}' in expression", other)),
         }
     }
@@ -241,7 +261,30 @@ impl Parser {
     }
 
     fn parse_expr(&mut self) -> Result<Expr, String> {
-        self.parse_comparison()
+        self.parse_logical()
+    }
+
+    fn parse_logical(&mut self) -> Result<Expr, String> {
+        let mut lhs = self.parse_comparison()?;
+
+        loop {
+            let op = match self.peek() {
+                Some(ExprToken::Op(s)) if s == "&&" => BinOp::And,
+                Some(ExprToken::Op(s)) if s == "||" => BinOp::Or,
+                Some(ExprToken::Ident(s)) if s == "and" => BinOp::And,
+                Some(ExprToken::Ident(s)) if s == "or" => BinOp::Or,
+                _ => break,
+            };
+            self.next_token(); // consume the operator
+            let rhs = self.parse_comparison()?;
+            lhs = Expr::BinOp {
+                op,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            };
+        }
+
+        Ok(lhs)
     }
 
     fn parse_comparison(&mut self) -> Result<Expr, String> {
@@ -305,11 +348,17 @@ impl Parser {
             }
             Some(ExprToken::Ident(_)) => {
                 if let Some(ExprToken::Ident(name)) = self.next_token() {
-                    // Boolean and null keywords
+                    // Boolean, null, and operator keywords
                     match name.as_str() {
                         "true" => return Ok(Expr::Literal(Value::Bool(true))),
                         "false" => return Ok(Expr::Literal(Value::Bool(false))),
                         "null" => return Ok(Expr::Literal(Value::Null)),
+                        "and" | "or" => {
+                            return Err(format!(
+                                "`{}` is a reserved keyword and cannot be used as an identifier",
+                                name
+                            ));
+                        }
                         _ => {}
                     }
 

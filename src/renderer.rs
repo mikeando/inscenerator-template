@@ -193,6 +193,23 @@ fn apply_binop(op: &BinOp, lhs: Value, rhs: Value) -> Result<Value, String> {
             }))
         }
 
+        BinOp::And | BinOp::Or => match (&lhs, &rhs) {
+            (Value::Bool(a), Value::Bool(b)) => {
+                let result = if matches!(op, BinOp::And) {
+                    *a && *b
+                } else {
+                    *a || *b
+                };
+                Ok(Value::Bool(result))
+            }
+            _ => Err(format!(
+                "`{}` operator requires Bool operands, got `{}` and `{}`",
+                op,
+                lhs.render(),
+                rhs.render()
+            )),
+        },
+
         BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
             let cmp = match (&lhs, &rhs) {
                 (Value::Int(a), Value::Int(b)) => a.cmp(b),
