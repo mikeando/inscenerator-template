@@ -554,3 +554,103 @@ fn test_function_with_dotted_path_arg() {
     let ctx = ctx! { "user": { "name": "Alice" } };
     assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "yes");
 }
+
+// --- String built-ins: upper, lower, trim, replace ---
+
+#[test]
+fn test_builtin_upper() {
+    let tmpl = Template::parse("{{ upper(name) }}").unwrap();
+    let ctx = ctx! { "name": "hello" };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "HELLO");
+}
+
+#[test]
+fn test_builtin_upper_unicode() {
+    let tmpl = Template::parse("{{ upper(word) }}").unwrap();
+    let ctx = ctx! { "word": "café" };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "CAFÉ");
+}
+
+#[test]
+fn test_builtin_upper_wrong_type() {
+    let tmpl = Template::parse("{{ upper(count) }}").unwrap();
+    let ctx = ctx! { "count": 42 };
+    assert!(render(&tmpl, ctx.as_ref()).is_err());
+}
+
+#[test]
+fn test_builtin_upper_wrong_arg_count() {
+    let tmpl = Template::parse("{{ upper(a, b) }}").unwrap();
+    let ctx = ctx! { "a": "x", "b": "y" };
+    assert!(render(&tmpl, ctx.as_ref()).is_err());
+}
+
+#[test]
+fn test_builtin_lower() {
+    let tmpl = Template::parse("{{ lower(name) }}").unwrap();
+    let ctx = ctx! { "name": "HELLO" };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "hello");
+}
+
+#[test]
+fn test_builtin_lower_wrong_type() {
+    let tmpl = Template::parse("{{ lower(count) }}").unwrap();
+    let ctx = ctx! { "count": 1 };
+    assert!(render(&tmpl, ctx.as_ref()).is_err());
+}
+
+#[test]
+fn test_builtin_trim() {
+    let tmpl = Template::parse("'{{ trim(text) }}'").unwrap();
+    let ctx = ctx! { "text": "  hello  " };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "'hello'");
+}
+
+#[test]
+fn test_builtin_trim_no_whitespace() {
+    let tmpl = Template::parse("{{ trim(text) }}").unwrap();
+    let ctx = ctx! { "text": "hello" };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "hello");
+}
+
+#[test]
+fn test_builtin_trim_wrong_type() {
+    let tmpl = Template::parse("{{ trim(count) }}").unwrap();
+    let ctx = ctx! { "count": 3 };
+    assert!(render(&tmpl, ctx.as_ref()).is_err());
+}
+
+#[test]
+fn test_builtin_replace() {
+    let tmpl = Template::parse("{{ replace(text, '-', ' ') }}").unwrap();
+    let ctx = ctx! { "text": "hello-world" };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "hello world");
+}
+
+#[test]
+fn test_builtin_replace_multiple_occurrences() {
+    let tmpl = Template::parse("{{ replace(text, 'o', '0') }}").unwrap();
+    let ctx = ctx! { "text": "foo bar boo" };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "f00 bar b00");
+}
+
+#[test]
+fn test_builtin_replace_no_match() {
+    let tmpl = Template::parse("{{ replace(text, 'x', 'y') }}").unwrap();
+    let ctx = ctx! { "text": "hello" };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "hello");
+}
+
+#[test]
+fn test_builtin_replace_wrong_type() {
+    let tmpl = Template::parse("{{ replace(count, '1', '2') }}").unwrap();
+    let ctx = ctx! { "count": 1 };
+    assert!(render(&tmpl, ctx.as_ref()).is_err());
+}
+
+#[test]
+fn test_builtin_replace_wrong_arg_count() {
+    let tmpl = Template::parse("{{ replace(text, '-') }}").unwrap();
+    let ctx = ctx! { "text": "a-b" };
+    assert!(render(&tmpl, ctx.as_ref()).is_err());
+}

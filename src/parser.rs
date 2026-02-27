@@ -134,6 +134,55 @@ fn make_builtins() -> HashMap<String, Arc<dyn Function>> {
         }),
     );
 
+    fns.insert(
+        "upper".to_string(),
+        Arc::new(|args: &[Value]| -> Result<Value, String> {
+            match args {
+                [Value::Str(s)] => Ok(Value::Str(s.to_uppercase().into())),
+                [_] => Err("upper() expects a Str argument".to_string()),
+                _ => Err(format!("upper() expects 1 argument, got {}", args.len())),
+            }
+        }),
+    );
+
+    fns.insert(
+        "lower".to_string(),
+        Arc::new(|args: &[Value]| -> Result<Value, String> {
+            match args {
+                [Value::Str(s)] => Ok(Value::Str(s.to_lowercase().into())),
+                [_] => Err("lower() expects a Str argument".to_string()),
+                _ => Err(format!("lower() expects 1 argument, got {}", args.len())),
+            }
+        }),
+    );
+
+    fns.insert(
+        "trim".to_string(),
+        Arc::new(|args: &[Value]| -> Result<Value, String> {
+            match args {
+                [Value::Str(s)] => Ok(Value::Str(s.trim().into())),
+                [_] => Err("trim() expects a Str argument".to_string()),
+                _ => Err(format!("trim() expects 1 argument, got {}", args.len())),
+            }
+        }),
+    );
+
+    fns.insert(
+        "replace".to_string(),
+        Arc::new(|args: &[Value]| -> Result<Value, String> {
+            match args {
+                [Value::Str(s), Value::Str(from), Value::Str(to)] => {
+                    Ok(Value::Str(s.replace(from.as_str(), to.as_str()).into()))
+                }
+                [_, _, _] => Err("replace() expects three Str arguments".to_string()),
+                _ => Err(format!(
+                    "replace() expects 3 arguments, got {}",
+                    args.len()
+                )),
+            }
+        }),
+    );
+
     fns
 }
 
