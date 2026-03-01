@@ -1,6 +1,6 @@
 [package]
 name = "inscenerator-template"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Michael Anderson <drmikeando@gmail.com>"]
 edition = "2024"
 license = "MIT"
