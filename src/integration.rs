@@ -276,7 +276,7 @@ fn test_missing_variable_errors() {
     let ctx = ctx! {};
     // Exposing bug: missing variables should be an error
     let err = render(&tmpl, ctx.as_ref()).unwrap_err();
-    assert_eq!(err, "Variable not found: `missing` ");
+    assert_eq!(err, "Variable not found: `missing`");
 }
 
 #[test]
@@ -709,10 +709,9 @@ fn test_symbolic_or() {
 #[test]
 fn test_and_with_comparisons() {
     // Compound condition: role == "admin" and active
-    let tmpl = Template::parse(
-        "{% if role == 'admin' and active %}allowed{% else %}denied{% endif %}",
-    )
-    .unwrap();
+    let tmpl =
+        Template::parse("{% if role == 'admin' and active %}allowed{% else %}denied{% endif %}")
+            .unwrap();
     let ctx = ctx! { "role": "admin", "active": true };
     assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "allowed");
     let ctx2 = ctx! { "role": "admin", "active": false };
@@ -723,10 +722,9 @@ fn test_and_with_comparisons() {
 
 #[test]
 fn test_or_with_comparisons() {
-    let tmpl = Template::parse(
-        "{% if role == 'admin' or role == 'editor' %}yes{% else %}no{% endif %}",
-    )
-    .unwrap();
+    let tmpl =
+        Template::parse("{% if role == 'admin' or role == 'editor' %}yes{% else %}no{% endif %}")
+            .unwrap();
     let ctx = ctx! { "role": "editor" };
     assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "yes");
     let ctx2 = ctx! { "role": "viewer" };
@@ -735,8 +733,7 @@ fn test_or_with_comparisons() {
 
 #[test]
 fn test_chained_and() {
-    let tmpl =
-        Template::parse("{% if a and b and c %}yes{% else %}no{% endif %}").unwrap();
+    let tmpl = Template::parse("{% if a and b and c %}yes{% else %}no{% endif %}").unwrap();
     let ctx = ctx! { "a": true, "b": true, "c": true };
     assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "yes");
     let ctx2 = ctx! { "a": true, "b": false, "c": true };
@@ -773,8 +770,7 @@ fn test_enumerate_indices() {
 #[test]
 fn test_enumerate_values() {
     // original values are accessible via e.value
-    let tmpl =
-        Template::parse("{% for e in enumerate(items) %}{{ e.value }}{% endfor %}").unwrap();
+    let tmpl = Template::parse("{% for e in enumerate(items) %}{{ e.value }}{% endfor %}").unwrap();
     let ctx = ctx! { "items": ["x", "y", "z"] };
     assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "xyz");
 }
@@ -791,9 +787,10 @@ fn test_enumerate_index_and_value() {
 #[test]
 fn test_enumerate_nested_map_value() {
     // Works with list-of-maps: e.value.name
-    let tmpl =
-        Template::parse("{% for e in enumerate(items) %}{{ e.index }}.{{ e.value.name }} {% endfor %}")
-            .unwrap();
+    let tmpl = Template::parse(
+        "{% for e in enumerate(items) %}{{ e.index }}.{{ e.value.name }} {% endfor %}",
+    )
+    .unwrap();
     let ctx = ctx! {
         "items": [
             { "name": "Alice" },
@@ -816,8 +813,7 @@ fn test_enumerate_last_item_check() {
 
 #[test]
 fn test_enumerate_empty_list() {
-    let tmpl =
-        Template::parse("{% for e in enumerate(items) %}x{% endfor %}nothing").unwrap();
+    let tmpl = Template::parse("{% for e in enumerate(items) %}x{% endfor %}nothing").unwrap();
     let ctx = ctx! { "items": [] };
     assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "nothing");
 }
@@ -833,5 +829,239 @@ fn test_enumerate_wrong_type() {
 fn test_enumerate_wrong_arg_count() {
     let tmpl = Template::parse("{{ enumerate(a, b) }}").unwrap();
     let ctx = ctx! { "a": ["x"], "b": ["y"] };
+    assert!(render(&tmpl, ctx.as_ref()).is_err());
+}
+
+// --- Subscript path notation ---
+
+#[test]
+fn test_subscript_literal_key() {
+    let tmpl = Template::parse("{{ data.[\"key\"] }}").unwrap();
+    let ctx = ctx! { "data": { "key": "value" } };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "value");
+}
+
+#[test]
+fn test_subscript_numeric_prefix_key() {
+    // The motivating use case: numeric-prefixed keys unreachable via dot notation
+    let tmpl = Template::parse("{{ chapters.[\"010_intro\"].title }}").unwrap();
+    let ctx = ctx! {
+        "chapters": {
+            "010_intro": { "title": "Introduction" }
+        }
+    };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "Introduction");
+}
+
+#[test]
+fn test_subscript_dynamic_key() {
+    // data.[key_var] — key resolved at render time from context
+    let tmpl = Template::parse("{{ data.[key_var] }}").unwrap();
+    let ctx = ctx! { "data": { "hello": "world" }, "key_var": "hello" };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "world");
+}
+
+#[test]
+fn test_subscript_equivalent_to_dot() {
+    // x.["foo"] is equivalent to x.foo for identifier-safe keys
+    let tmpl_dot = Template::parse("{{ user.name }}").unwrap();
+    let tmpl_sub = Template::parse("{{ user.[\"name\"] }}").unwrap();
+    let ctx = ctx! { "user": { "name": "Alice" } };
+    assert_eq!(
+        render(&tmpl_dot, ctx.as_ref()).unwrap(),
+        render(&tmpl_sub, ctx.as_ref()).unwrap()
+    );
+}
+
+#[test]
+fn test_subscript_missing_key_errors() {
+    let tmpl = Template::parse("{{ data.[\"missing\"] }}").unwrap();
+    let ctx = ctx! { "data": {} };
+    assert!(render(&tmpl, ctx.as_ref()).is_err());
+}
+
+#[test]
+fn test_subscript_non_str_key_errors() {
+    // data.[42] — Int key is a runtime error
+    let tmpl = Template::parse("{{ data.[42] }}").unwrap();
+    let ctx = ctx! { "data": {} };
+    let err = render(&tmpl, ctx.as_ref()).unwrap_err();
+    assert!(
+        err.contains("Subscript key must evaluate to a Str"),
+        "error was: {}",
+        err
+    );
+}
+
+// --- Null-coalescing ?? ---
+
+#[test]
+fn test_null_coalesce_null_gives_fallback() {
+    let tmpl = Template::parse("{{ x ?? \"fallback\" }}").unwrap();
+    // ctx! doesn't support Value::Null directly — use HashMap
+    let mut map = std::collections::HashMap::new();
+    map.insert("x".to_string(), Value::Null);
+    let ctx: Arc<dyn DataSource> = Arc::new(map);
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "fallback");
+}
+
+#[test]
+fn test_null_coalesce_non_null_returns_value() {
+    let tmpl = Template::parse("{{ x ?? \"fallback\" }}").unwrap();
+    let ctx = ctx! { "x": "actual" };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "actual");
+}
+
+#[test]
+fn test_null_coalesce_chained() {
+    // a ?? b ?? c — first non-null wins
+    let tmpl = Template::parse("{{ a ?? b ?? \"default\" }}").unwrap();
+    let mut map = std::collections::HashMap::new();
+    map.insert("a".to_string(), Value::Null);
+    map.insert("b".to_string(), Value::Null);
+    let ctx_both_null: Arc<dyn DataSource> = Arc::new(map);
+    assert_eq!(render(&tmpl, ctx_both_null.as_ref()).unwrap(), "default");
+
+    let mut map = std::collections::HashMap::new();
+    map.insert("a".to_string(), Value::Null);
+    map.insert("b".to_string(), Value::Str("B".to_string()));
+    let ctx_b_value: Arc<dyn DataSource> = Arc::new(map);
+    assert_eq!(render(&tmpl, ctx_b_value.as_ref()).unwrap(), "B");
+
+    let ctx_a_value = ctx! { "a": "A", "b": "B" };
+    assert_eq!(render(&tmpl, ctx_a_value.as_ref()).unwrap(), "A");
+}
+
+// --- Null-safe .? and .?[ ---
+
+#[test]
+fn test_null_safe_dot_missing_key() {
+    let tmpl = Template::parse("{{ project.?title ?? \"none\" }}").unwrap();
+    let ctx = ctx! { "project": {} };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "none");
+}
+
+#[test]
+fn test_null_safe_dot_present_key() {
+    let tmpl = Template::parse("{{ project.?title ?? \"none\" }}").unwrap();
+    let ctx = ctx! { "project": { "title": "My Book" } };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "My Book");
+}
+
+#[test]
+fn test_null_safe_dot_null_receiver() {
+    let tmpl = Template::parse("{{ project.?title ?? \"none\" }}").unwrap();
+    // ctx! doesn't support Value::Null directly — use HashMap
+    let mut map = std::collections::HashMap::new();
+    map.insert("project".to_string(), Value::Null);
+    let ctx: Arc<dyn DataSource> = Arc::new(map);
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "none");
+}
+
+#[test]
+fn test_null_safe_chained_propagates_null() {
+    let tmpl = Template::parse("{{ project.?meta.?title ?? \"none\" }}").unwrap();
+    let ctx = ctx! { "project": {} };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "none");
+}
+
+#[test]
+fn test_null_safe_subscript_literal_key() {
+    // Full motivating use case from the spec
+    let tmpl =
+        Template::parse("{{ project.?[\"010_intro\"].?meta.?title ?? \"Untitled\" }}").unwrap();
+    let ctx_present = ctx! {
+        "project": { "010_intro": { "meta": { "title": "Introduction" } } }
+    };
+    assert_eq!(render(&tmpl, ctx_present.as_ref()).unwrap(), "Introduction");
+    let ctx_missing = ctx! { "project": {} };
+    assert_eq!(render(&tmpl, ctx_missing.as_ref()).unwrap(), "Untitled");
+}
+
+#[test]
+fn test_null_safe_subscript_dynamic_key() {
+    // project.?[chapter_key].title — dynamic key with null-safe access
+    let tmpl = Template::parse("{{ project.?[chapter_key].?title ?? \"none\" }}").unwrap();
+    let ctx_present = ctx! {
+        "project": { "intro": { "title": "Hello" } },
+        "chapter_key": "intro"
+    };
+    assert_eq!(render(&tmpl, ctx_present.as_ref()).unwrap(), "Hello");
+    let ctx_missing = ctx! {
+        "project": {},
+        "chapter_key": "intro"
+    };
+    assert_eq!(render(&tmpl, ctx_missing.as_ref()).unwrap(), "none");
+}
+
+#[test]
+fn test_null_safe_in_conditional() {
+    let tmpl = Template::parse(
+        "{% if project.?title != null %}{{ project.?title }}{% else %}No title{% endif %}",
+    )
+    .unwrap();
+    let ctx_present = ctx! { "project": { "title": "Hello" } };
+    assert_eq!(render(&tmpl, ctx_present.as_ref()).unwrap(), "Hello");
+    let ctx_absent = ctx! { "project": {} };
+    assert_eq!(render(&tmpl, ctx_absent.as_ref()).unwrap(), "No title");
+}
+
+#[test]
+fn test_null_safe_replaces_default_function_pattern() {
+    // {{ project.?meta.?title ?? "" }} replaces default(project.meta.title, "")
+    let tmpl = Template::parse("{{ project.?meta.?title ?? \"\" }}").unwrap();
+    let ctx_with = ctx! { "project": { "meta": { "title": "Great Book" } } };
+    assert_eq!(render(&tmpl, ctx_with.as_ref()).unwrap(), "Great Book");
+    let ctx_no_title = ctx! { "project": { "meta": {} } };
+    assert_eq!(render(&tmpl, ctx_no_title.as_ref()).unwrap(), "");
+    let ctx_no_meta = ctx! { "project": {} };
+    assert_eq!(render(&tmpl, ctx_no_meta.as_ref()).unwrap(), "");
+}
+
+// --- Root-level subscript access ---
+
+#[test]
+fn test_root_subscript_dynamic_key() {
+    // .[chapter_key].title — subscript root by variable, then dot access
+    let tmpl = Template::parse("{{ .[chapter_key].title }}").unwrap();
+    let ctx = ctx! {
+        "chapter_key": "intro",
+        "intro": { "title": "Hello" }
+    };
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "Hello");
+}
+
+#[test]
+fn test_root_subscript_missing_errors() {
+    let tmpl = Template::parse("{{ .[\"absent\"] }}").unwrap();
+    let ctx = ctx! {};
+    assert!(render(&tmpl, ctx.as_ref()).is_err());
+}
+
+#[test]
+fn test_root_null_safe_subscript_chain() {
+    // .?["010_intro"].?meta.?title ?? "Untitled"
+    let tmpl = Template::parse("{{ .?[\"010_intro\"].?meta.?title ?? \"Untitled\" }}").unwrap();
+    let ctx_present = ctx! {
+        "010_intro": { "meta": { "title": "Introduction" } }
+    };
+    assert_eq!(render(&tmpl, ctx_present.as_ref()).unwrap(), "Introduction");
+    let ctx_missing = ctx! {};
+    assert_eq!(render(&tmpl, ctx_missing.as_ref()).unwrap(), "Untitled");
+}
+
+#[test]
+fn test_root_null_safe_ident_missing() {
+    let tmpl = Template::parse("{{ .?title ?? \"none\" }}").unwrap();
+    let ctx = ctx! {};
+    assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "none");
+}
+
+#[test]
+fn test_strict_step_after_null_safe_null_errors() {
+    // .?meta.title — .?meta returns Null when key absent; strict .title on Null errors.
+    // Use .?title (not .title) if you want null-safe chaining to a fallback.
+    let tmpl = Template::parse("{{ project.?meta.title }}").unwrap();
+    let ctx = ctx! { "project": {} };
     assert!(render(&tmpl, ctx.as_ref()).is_err());
 }

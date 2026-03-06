@@ -138,7 +138,7 @@ fn make_builtins() -> HashMap<String, Arc<dyn Function>> {
         "upper".to_string(),
         Arc::new(|args: &[Value]| -> Result<Value, String> {
             match args {
-                [Value::Str(s)] => Ok(Value::Str(s.to_uppercase().into())),
+                [Value::Str(s)] => Ok(Value::Str(s.to_uppercase())),
                 [_] => Err("upper() expects a Str argument".to_string()),
                 _ => Err(format!("upper() expects 1 argument, got {}", args.len())),
             }
@@ -149,7 +149,7 @@ fn make_builtins() -> HashMap<String, Arc<dyn Function>> {
         "lower".to_string(),
         Arc::new(|args: &[Value]| -> Result<Value, String> {
             match args {
-                [Value::Str(s)] => Ok(Value::Str(s.to_lowercase().into())),
+                [Value::Str(s)] => Ok(Value::Str(s.to_lowercase())),
                 [_] => Err("lower() expects a Str argument".to_string()),
                 _ => Err(format!("lower() expects 1 argument, got {}", args.len())),
             }
@@ -172,13 +172,10 @@ fn make_builtins() -> HashMap<String, Arc<dyn Function>> {
         Arc::new(|args: &[Value]| -> Result<Value, String> {
             match args {
                 [Value::Str(s), Value::Str(from), Value::Str(to)] => {
-                    Ok(Value::Str(s.replace(from.as_str(), to.as_str()).into()))
+                    Ok(Value::Str(s.replace(from.as_str(), to.as_str())))
                 }
                 [_, _, _] => Err("replace() expects three Str arguments".to_string()),
-                _ => Err(format!(
-                    "replace() expects 3 arguments, got {}",
-                    args.len()
-                )),
+                _ => Err(format!("replace() expects 3 arguments, got {}", args.len())),
             }
         }),
     );

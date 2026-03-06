@@ -1,4 +1,4 @@
-use crate::expr::{BinOp, Expr};
+use crate::expr::{BinOp, Expr, PathStart, PathStep};
 use crate::parser::{Node, Template};
 use crate::value::{DataSource, Value};
 
@@ -122,19 +122,146 @@ fn eval(expr: &Expr, ctx: &dyn DataSource, template: &Template) -> Result<Value,
     match expr {
         Expr::Literal(v) => Ok(v.clone()),
 
-        Expr::Path(p) => {
-            let root_key = p.split('.').next().unwrap();
-            let root_val = ctx
-                .get(root_key)
-                .ok_or_else(|| format!("Variable not found: `{}` ", p))?;
+        Expr::Path { start, steps } => {
+            let mut path_so_far = match start {
+                PathStart::Ident(s) => s.to_string(),
+                PathStart::NullSafeIdent(s) => format!(".?{}", s),
+                PathStart::Subscript(key_expr) => format!(".[{}]", key_expr),
+                PathStart::NullSafeSubscript(key_expr) => format!(".?[{}]", key_expr),
+            };
+            let mut current = match start {
+                PathStart::Ident(s) => ctx
+                    .get(s.as_str())
+                    .ok_or_else(|| format!("Variable not found: `{}`", expr))?,
+                PathStart::NullSafeIdent(s) => ctx.get(s.as_str()).unwrap_or(Value::Null),
+                PathStart::Subscript(key_expr) => {
+                    let key_val = eval(key_expr, ctx, template)?;
+                    let key = match key_val {
+                        Value::Str(s) => s,
+                        other => {
+                            return Err(format!(
+                                "Subscript key must evaluate to a Str, got `{}`",
+                                other.render()
+                            ));
+                        }
+                    };
+                    ctx.get(key.as_str())
+                        .ok_or_else(|| format!("Variable not found: `{}`", expr))?
+                }
+                PathStart::NullSafeSubscript(key_expr) => {
+                    let key_val = eval(key_expr, ctx, template)?;
+                    let key = match key_val {
+                        Value::Str(s) => s,
+                        other => {
+                            return Err(format!(
+                                "Subscript key must evaluate to a Str, got `{}`",
+                                other.render()
+                            ));
+                        }
+                    };
+                    ctx.get(key.as_str()).unwrap_or(Value::Null)
+                }
+            };
 
-            if p.contains('.') {
-                root_val
-                    .get_path(&p[root_key.len() + 1..])
-                    .ok_or_else(|| format!("Variable not found: `{}` ", p))
-            } else {
-                Ok(root_val)
+            for step in steps {
+                current = match step {
+                    PathStep::Dot(key) => {
+                        let val = match &current {
+                            Value::Null => {
+                                return Err(format!(
+                                    "`{}` was null, cannot access `.{}` field",
+                                    path_so_far, key
+                                ));
+                            }
+                            Value::Map(map) => map
+                                .get(key.as_str())
+                                .cloned()
+                                .ok_or_else(|| format!("Variable not found: `{}`", expr))?,
+                            Value::DataSource(src) => src
+                                .get(key)
+                                .ok_or_else(|| format!("Variable not found: `{}`", expr))?,
+                            _ => return Err(format!("Variable not found: `{}`", expr)),
+                        };
+                        path_so_far.push_str(&format!(".{}", key));
+                        val
+                    }
+                    PathStep::Subscript(key_expr) => {
+                        let key_val = eval(key_expr, ctx, template)?;
+                        let key = match key_val {
+                            Value::Str(s) => s,
+                            other => {
+                                return Err(format!(
+                                    "Subscript key must evaluate to a Str, got `{}`",
+                                    other.render()
+                                ));
+                            }
+                        };
+                        let val = match &current {
+                            Value::Null => {
+                                return Err(format!(
+                                    "`{}` was null, cannot access `.[{}]` field",
+                                    path_so_far, key
+                                ));
+                            }
+                            Value::Map(map) => map
+                                .get(key.as_str())
+                                .cloned()
+                                .ok_or_else(|| format!("Variable not found: `{}`", expr))?,
+                            Value::DataSource(src) => src
+                                .get(key.as_str())
+                                .ok_or_else(|| format!("Variable not found: `{}`", expr))?,
+                            _ => return Err(format!("Variable not found: `{}`", expr)),
+                        };
+                        path_so_far.push_str(&format!(".[{}]", key));
+                        val
+                    }
+                    PathStep::NullDot(key) => {
+                        let val = match &current {
+                            Value::Null => Value::Null,
+                            Value::Map(map) => {
+                                map.get(key.as_str()).cloned().unwrap_or(Value::Null)
+                            }
+                            Value::DataSource(src) => src.get(key).unwrap_or(Value::Null),
+                            other => {
+                                return Err(format!(
+                                    "`.?` requires a Map, DataSource, or Null receiver, got `{}`",
+                                    other.render()
+                                ));
+                            }
+                        };
+                        path_so_far.push_str(&format!(".?{}", key));
+                        val
+                    }
+                    PathStep::NullSubscript(key_expr) => {
+                        let key_val = eval(key_expr, ctx, template)?;
+                        let key = match key_val {
+                            Value::Str(s) => s,
+                            other => {
+                                return Err(format!(
+                                    "Subscript key must evaluate to a Str, got `{}`",
+                                    other.render()
+                                ));
+                            }
+                        };
+                        let val = match &current {
+                            Value::Null => Value::Null,
+                            Value::Map(map) => {
+                                map.get(key.as_str()).cloned().unwrap_or(Value::Null)
+                            }
+                            Value::DataSource(src) => src.get(key.as_str()).unwrap_or(Value::Null),
+                            other => {
+                                return Err(format!(
+                                    "`.?[` requires a Map, DataSource, or Null receiver, got `{}`",
+                                    other.render()
+                                ));
+                            }
+                        };
+                        path_so_far.push_str(&format!(".?[{}]", key));
+                        val
+                    }
+                };
             }
+            Ok(current)
         }
 
         Expr::Not(inner) => {
@@ -172,6 +299,8 @@ fn apply_binop(op: &BinOp, lhs: Value, rhs: Value) -> Result<Value, String> {
         BinOp::Eq | BinOp::Ne => {
             let equal = match (&lhs, &rhs) {
                 (Value::Null, Value::Null) => true,
+                // Null compared to any non-Null is never equal.
+                (Value::Null, _) | (_, Value::Null) => false,
                 (Value::Bool(a), Value::Bool(b)) => a == b,
                 (Value::Str(a), Value::Str(b)) => a == b,
                 (Value::Int(a), Value::Int(b)) => a == b,
@@ -281,6 +410,11 @@ fn apply_binop(op: &BinOp, lhs: Value, rhs: Value) -> Result<Value, String> {
                 lhs.render(),
                 rhs.render()
             )),
+        },
+
+        BinOp::NullCoalesce => match lhs {
+            Value::Null => Ok(rhs),
+            other => Ok(other),
         },
 
         BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
@@ -575,5 +709,239 @@ mod tests {
             "items": [1, 2]
         };
         assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "1!2!");
+    }
+
+    #[test]
+    fn test_eval_subscript_literal_key() -> Result<(), String> {
+        let ctx = ctx! { "project": { "meta": "value" } };
+        assert_eq!(ev("project.[\"meta\"]", ctx.as_ref())?.render(), "value");
+        Ok(())
+    }
+
+    #[test]
+    fn test_eval_subscript_dynamic_key() -> Result<(), String> {
+        // a.[key] where key is a variable holding a string
+        let ctx = ctx! { "data": { "hello": "world" }, "key": "hello" };
+        assert_eq!(ev("data.[key]", ctx.as_ref())?.render(), "world");
+        Ok(())
+    }
+
+    #[test]
+    fn test_eval_subscript_dynamic_dotted_key() -> Result<(), String> {
+        // a.[cfg.field] where cfg.field resolves to a string
+        let ctx = ctx! {
+            "data": { "foo": "bar" },
+            "cfg": { "field": "foo" }
+        };
+        assert_eq!(ev("data.[cfg.field]", ctx.as_ref())?.render(), "bar");
+        Ok(())
+    }
+
+    #[test]
+    fn test_eval_subscript_missing_key_errors() {
+        let ctx = ctx! { "project": {} };
+        let result = ev("project.[\"missing\"]", ctx.as_ref());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Variable not found"));
+    }
+
+    #[test]
+    fn test_eval_subscript_non_str_key_errors() {
+        // a.[42] — Int key is a runtime error
+        let ctx = ctx! { "a": {} };
+        let result = ev("a.[42]", ctx.as_ref());
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .contains("Subscript key must evaluate to a Str")
+        );
+    }
+
+    #[test]
+    fn test_eval_mixed_dot_and_subscript() -> Result<(), String> {
+        let ctx = ctx! {
+            "project": {
+                "010_intro": {
+                    "meta": { "title": "Introduction" }
+                }
+            }
+        };
+        assert_eq!(
+            ev("project.[\"010_intro\"].meta.title", ctx.as_ref())?.render(),
+            "Introduction"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_eval_subscript_on_non_map_errors() {
+        let ctx = ctx! { "x": 42 };
+        assert!(ev("x.[\"key\"]", ctx.as_ref()).is_err());
+    }
+
+    // --- Null-coalescing operator ---
+
+    #[test]
+    fn test_eval_null_coalesce_null_lhs() -> Result<(), String> {
+        let ctx = ctx! {};
+        assert_eq!(
+            ev("null ?? \"fallback\"", ctx.as_ref())?.render(),
+            "fallback"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_eval_null_coalesce_non_null_lhs() -> Result<(), String> {
+        let ctx = ctx! {};
+        assert_eq!(
+            ev("\"value\" ?? \"fallback\"", ctx.as_ref())?.render(),
+            "value"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_eval_null_coalesce_with_path() -> Result<(), String> {
+        let ctx = ctx! { "x": "hello" };
+        assert_eq!(ev("x ?? \"fallback\"", ctx.as_ref())?.render(), "hello");
+        Ok(())
+    }
+
+    #[test]
+    fn test_eval_null_coalesce_missing_var_errors() {
+        // ?? only catches Value::Null — a missing variable still errors.
+        // Use ?. to produce Null from a missing key, then ?? to fall back.
+        let ctx = ctx! {};
+        assert!(ev("missing_var ?? \"fallback\"", ctx.as_ref()).is_err());
+    }
+
+    // --- Null-safe access operators ---
+
+    #[test]
+    fn test_eval_null_safe_key_missing_returns_null() -> Result<(), String> {
+        let tmpl = Template::parse("{{ project.?missing_key ?? \"fallback\" }}").unwrap();
+        let ctx = ctx! { "project": {} };
+        assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "fallback");
+        Ok(())
+    }
+
+    #[test]
+    fn test_eval_null_safe_null_receiver_propagates() -> Result<(), String> {
+        let tmpl = Template::parse("{{ project.?title ?? \"fallback\" }}").unwrap();
+        // Build context manually since ctx! macro doesn't support Value::Null directly
+        let mut map: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+        map.insert("project".to_string(), Value::Null);
+        let ctx = std::sync::Arc::new(map) as std::sync::Arc<dyn crate::value::DataSource>;
+        assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "fallback");
+        Ok(())
+    }
+
+    #[test]
+    fn test_eval_null_safe_present_key_returns_value() -> Result<(), String> {
+        let tmpl = Template::parse("{{ project.?title ?? \"fallback\" }}").unwrap();
+        let ctx = ctx! { "project": { "title": "My Book" } };
+        assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "My Book");
+        Ok(())
+    }
+
+    #[test]
+    fn test_eval_null_safe_on_non_object_errors() {
+        let tmpl = Template::parse("{{ x.?key }}").unwrap();
+        let ctx = ctx! { "x": 42 };
+        assert!(render(&tmpl, ctx.as_ref()).is_err());
+    }
+
+    #[test]
+    fn test_eval_null_safe_subscript_literal() -> Result<(), String> {
+        let tmpl =
+            Template::parse("{{ project.?[\"010_intro\"].?meta.title ?? \"Untitled\" }}").unwrap();
+        let ctx = ctx! {
+            "project": {
+                "010_intro": { "meta": { "title": "Introduction" } }
+            }
+        };
+        assert_eq!(render(&tmpl, ctx.as_ref()).unwrap(), "Introduction");
+        Ok(())
+    }
+
+    #[test]
+    fn test_eval_null_safe_subscript_dynamic_key() -> Result<(), String> {
+        // project.?[key] where key is a variable
+        let tmpl = Template::parse("{{ project.?[key] ?? \"none\" }}").unwrap();
+        let ctx_present = ctx! {
+            "project": { "intro": "Hello" },
+            "key": "intro"
+        };
+        assert_eq!(render(&tmpl, ctx_present.as_ref()).unwrap(), "Hello");
+        let ctx_missing = ctx! {
+            "project": {},
+            "key": "intro"
+        };
+        assert_eq!(render(&tmpl, ctx_missing.as_ref()).unwrap(), "none");
+        Ok(())
+    }
+
+    // --- Root-level subscript and null-safe root access ---
+
+    #[test]
+    fn test_eval_root_subscript_strict_present() -> Result<(), String> {
+        // .[key_var] — subscript root context by variable
+        let ctx = ctx! { "key_var": "x", "x": "hello" };
+        assert_eq!(ev(".[key_var]", ctx.as_ref())?.render(), "hello");
+        Ok(())
+    }
+
+    #[test]
+    fn test_eval_root_subscript_strict_missing() {
+        let ctx = ctx! {};
+        assert!(ev(".[\"absent\"]", ctx.as_ref()).is_err());
+    }
+
+    #[test]
+    fn test_eval_root_subscript_int_key_errors() {
+        // .[42] — Int key is a runtime error
+        let ctx = ctx! {};
+        let err = ev(".[42]", ctx.as_ref()).unwrap_err();
+        assert!(
+            err.contains("Subscript key must evaluate to a Str"),
+            "error was: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_eval_root_null_safe_ident_present() -> Result<(), String> {
+        let ctx = ctx! { "title": "My Book" };
+        assert_eq!(ev(".?title ?? \"none\"", ctx.as_ref())?.render(), "My Book");
+        Ok(())
+    }
+
+    #[test]
+    fn test_eval_root_null_safe_ident_missing() -> Result<(), String> {
+        let ctx = ctx! {};
+        assert_eq!(ev(".?title ?? \"none\"", ctx.as_ref())?.render(), "none");
+        Ok(())
+    }
+
+    #[test]
+    fn test_eval_root_null_safe_subscript_present() -> Result<(), String> {
+        let ctx = ctx! { "010_intro": "value" };
+        assert_eq!(
+            ev(".?[\"010_intro\"] ?? \"none\"", ctx.as_ref())?.render(),
+            "value"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_eval_root_null_safe_subscript_missing() -> Result<(), String> {
+        let ctx = ctx! {};
+        assert_eq!(
+            ev(".?[\"absent\"] ?? \"none\"", ctx.as_ref())?.render(),
+            "none"
+        );
+        Ok(())
     }
 }

@@ -16,7 +16,7 @@ A lightweight Rust text templating engine where your own types drive rendering �
 | `{{- expr }}` / `{{ expr -}}` | Output, stripping whitespace before / after |
 | `{%- tag %}` / `{% tag -%}` | Block tag, stripping whitespace before / after |
 
-Expressions support dotted paths (`user.address.city`), negation (`!flag`), arithmetic (`+`, `-`, `*`, `/`, `%`), comparison (`==`, `!=`, `<`, `>`, `<=`, `>=`), boolean operators (`and`/`or` or `&&`/`||`), function calls (`ends_with(name, ".rs")`), parenthesised grouping (`(a + b) * c`), and literals (`true`, `false`, `null`, integers, floats, `"strings"`, `'strings'`). All expressions are parsed at `Template::parse()` time — invalid expressions are caught immediately, not at render time.
+Expressions support dotted paths (`user.address.city`), subscript access (`data.["key"]`, `data.[var]`), null-safe access (`a.?b`, `a.?["key"]`), null-coalescing (`a ?? fallback`), root subscript (`.["key"]`, `.?foo`, `.?["key"]`), negation (`!flag`), arithmetic (`+`, `-`, `*`, `/`, `%`), comparison (`==`, `!=`, `<`, `>`, `<=`, `>=`), boolean operators (`and`/`or` or `&&`/`||`), function calls (`ends_with(name, ".rs")`), parenthesised grouping (`(a + b) * c`), and literals (`true`, `false`, `null`, integers, floats, `"strings"`, `'strings'`). All expressions are parsed at `Template::parse()` time — invalid expressions are caught immediately, not at render time.
 
 ### Arithmetic operators
 
@@ -28,7 +28,7 @@ Expressions support dotted paths (`user.address.city`), negation (`!flag`), arit
 | `/` | `Int`, `Float` (mixed ok) | `Int` or `Float` | `Int / Int` truncates; errors on divide-by-zero |
 | `%` | `Int`, `Int` | `Int` | Errors on modulo-by-zero |
 
-Precedence (high → low): unary `-` → `*` `/` `%` → `+` `-` → comparisons → `and`/`or`.
+Precedence (high → low): unary `-` → `*` `/` `%` → `+` `-` → comparisons → `and`/`or` → `??`.
 Use `( expr )` to group sub-expressions.
 
 ```
@@ -55,6 +55,64 @@ Use `( expr )` to group sub-expressions.
 {% if role == 'admin' or role == 'editor' %}can edit{% endif %}
 {% if active and verified %}[verified]{% endif %}
 {% if a and b and c %}all three{% endif %}
+```
+
+### Subscript path access
+
+Use `.[expr]` to access a map with a string key that isn't a valid identifier, or with a key held in a variable:
+
+```
+{{ chapters.["010_intro"].title }}     — literal key
+{{ chapters.[selected_chapter].title }} — key from a variable
+{{ data.[config.key_field].value }}    — key from a dotted path
+```
+
+The key expression must evaluate to a `Str` at render time. Any expression is valid as the key.
+
+Dot steps and subscript steps can be freely mixed:
+
+```
+{{ project.["010_intro"].meta.title }}
+```
+
+### Null-safe access and null-coalescing
+
+Use `.?` and `.?[` for null-safe navigation and `??` to supply a fallback.
+
+| Operator | Meaning |
+|----------|---------|
+| `a.?b` | If `a` is `null` or `b` is absent, return `null`; otherwise return `a.b` |
+| `a.?["key"]` | Null-safe subscript — same but with a subscript key |
+| `a ?? b` | If `a` is `null`, return `b`; otherwise return `a` |
+
+`??` is right-associative and has lower precedence than all other operators.
+
+**`??` catches `Value::Null`, not missing variables.** A direct reference to an undefined variable still errors. Use `.?`/`.?[` to convert a potentially-absent key to `null`, then `??` to provide the default:
+
+```
+{{ meta.?subtitle ?? "" }}
+{{ project.?["010_intro"].?meta.title ?? "Untitled" }}
+{{ config.?database.?host ?? "localhost" }}
+```
+
+Null-safe chains propagate `null` — once a step produces `null`, all subsequent `.?`/`.?[` steps also return `null` without erroring. A strict `.` or `.[expr]` step after a null value will still error.
+
+### Root-level access
+
+Use a leading `.` to access the root context directly — enabling subscript access to keys that aren't valid identifiers and null-safe lookup of optional top-level keys:
+
+| Syntax | Meaning |
+|--------|---------|
+| `.foo` | Same as `foo` — explicit root access (sugar) |
+| `.["010_intro"]` | Strict subscript of root context by string literal |
+| `.[key_var]` | Strict subscript of root context by variable |
+| `.?foo` | Null-safe root lookup — returns `null` if `foo` absent |
+| `.?["key"]` | Null-safe root subscript |
+
+```
+{{ .["010_intro"].title }}
+{{ .?sidebar ?? "" }}
+{{ .?["config"].host ?? "localhost" }}
 ```
 
 ### Built-in functions
@@ -263,6 +321,7 @@ cargo run --example boolean_ops         # and/or operators for role/permission l
 cargo run --example enumerate           # enumerate() for numbered lists and position-aware rendering
 cargo run --example whitespace_control  # {{-, -}}, {%-, -%} to trim whitespace around tags
 cargo run --example arithmetic          # +, -, *, /, % operators and parenthesised grouping
+cargo run --example null_safe           # .[expr] subscript, .? .?[ null-safe access, ?? null-coalescing, root subscript
 ```
 
 ## Architecture
@@ -284,4 +343,5 @@ examples/
   enumerate.rs            — enumerate() for numbered lists and position-aware rendering
   whitespace_control.rs   — {{-, -}}, {%-, -%} markers for compact output
   arithmetic.rs           — +, -, *, /, % operators and parenthesised grouping
+  null_safe.rs            — .[expr] subscript, .? .?[ null-safe access, ?? null-coalescing, root subscript
 ```

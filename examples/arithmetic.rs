@@ -15,7 +15,7 @@
 ///   Float OP Float → Float
 ///   Int OP Float or Float OP Int → Float
 ///   Str + Str    → Str   (concatenation; only `+` supports strings)
-use inscenerator_template::{ctx, render, Template};
+use inscenerator_template::{Template, ctx, render};
 
 fn main() {
     // ------------------------------------------------------------------ //
@@ -37,7 +37,8 @@ fn main() {
         "{{ item.name }}: {{ item.price }} × {{ item.qty }} = {{ item.price * item.qty }}\n",
         "{% endfor -%}\n",
         "Tax ({{ tax_rate }}%): calculated at checkout\n",
-    )).unwrap();
+    ))
+    .unwrap();
 
     println!("{}", render(&receipt, cart.as_ref()).unwrap());
 
@@ -54,7 +55,8 @@ fn main() {
         "{{ total }} items, ",
         "{{ total / per_page }} full pages, ",
         "{{ total % per_page }} remaining\n",
-    )).unwrap();
+    ))
+    .unwrap();
 
     println!("{}", render(&pager, page.as_ref()).unwrap());
     // → 47 items, 4 full pages, 7 remaining
@@ -68,9 +70,9 @@ fn main() {
     };
 
     // Multiplying Int × Float yields Float
-    let discounted = Template::parse(
-        "After {{ discount * 100 }}% off: {{ price - price * discount }}\n"
-    ).unwrap();
+    let discounted =
+        Template::parse("After {{ discount * 100 }}% off: {{ price - price * discount }}\n")
+            .unwrap();
 
     println!("{}", render(&discounted, product.as_ref()).unwrap());
     // → After 15%  off: 24.65
@@ -97,8 +99,14 @@ fn main() {
     // With parens: (a + b) * c = 5 * 4 = 20
     let with_parens = Template::parse("{{ (a + b) * c }}\n").unwrap();
 
-    println!("a + b * c  = {}", render(&no_parens,   nums.as_ref()).unwrap().trim());
-    println!("(a+b) * c  = {}", render(&with_parens, nums.as_ref()).unwrap().trim());
+    println!(
+        "a + b * c  = {}",
+        render(&no_parens, nums.as_ref()).unwrap().trim()
+    );
+    println!(
+        "(a+b) * c  = {}",
+        render(&with_parens, nums.as_ref()).unwrap().trim()
+    );
 
     // ------------------------------------------------------------------ //
     // 6. Arithmetic in conditions
@@ -110,7 +118,8 @@ fn main() {
         "{% elif score >= 80 %}B",
         "{% elif score >= 70 %}C",
         "{% else %}D{% endif %}\n",
-    )).unwrap();
+    ))
+    .unwrap();
 
     println!("Grade: {}", render(&grade, score.as_ref()).unwrap().trim());
     // → Grade: C

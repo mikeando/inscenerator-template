@@ -9,7 +9,7 @@
 ///   `{%   tag -%}` — strips whitespace *after* the block tag
 ///
 /// Both sides can be combined on the same tag.
-use inscenerator_template::{ctx, render, Template};
+use inscenerator_template::{Template, ctx, render};
 
 fn main() {
     // ------------------------------------------------------------------ //
@@ -23,12 +23,10 @@ fn main() {
     let items = ctx! { "items": ["alpha", "beta", "gamma"] };
 
     // Without whitespace control:
-    let plain = Template::parse(
-        "{% for item in items %}\n{{ item }}{% endfor %}"
-    ).unwrap();
+    let plain = Template::parse("{% for item in items %}\n{{ item }}{% endfor %}").unwrap();
     let out = render(&plain, items.as_ref()).unwrap();
     println!("Plain:");
-    println!("{:?}", out);   // "\nalpha\nbeta\ngamma"
+    println!("{:?}", out); // "\nalpha\nbeta\ngamma"
 
     // With -%} on the for-tag we eat the newline that follows it, so the
     // items are rendered without a leading blank line.  The separator is a
@@ -39,9 +37,10 @@ fn main() {
         "{{ item }}",
         "{%- if item != 'gamma' %}, {% endif -%}\n",
         "{% endfor %}",
-    )).unwrap();
+    ))
+    .unwrap();
     let out = render(&csv, items.as_ref()).unwrap();
-    println!("CSV: {:?}", out);  // "alpha, beta, gamma"
+    println!("CSV: {:?}", out); // "alpha, beta, gamma"
 
     // ------------------------------------------------------------------ //
     // 2. Bullet list — one item per line, no blank lines around the loop
@@ -63,7 +62,8 @@ fn main() {
         "{%- for t in tasks -%}\n",
         "{% if t.done %}[x]{% else %}[ ]{% endif %} {{ t.text }}\n",
         "{% endfor -%}",
-    )).unwrap();
+    ))
+    .unwrap();
     let out = render(&bullet, tasks.as_ref()).unwrap();
     println!("\nTask list:");
     print!("{}", out);

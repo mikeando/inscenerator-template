@@ -3,11 +3,46 @@ use std::fmt;
 
 // --- Public types ---
 
+/// A single step in a path expression.
+#[derive(Debug, Clone)]
+pub enum PathStep {
+    /// `.ident` — strict dot access
+    Dot(String),
+    /// `.[expr]` — strict subscript; expr must evaluate to Value::Str at render time
+    Subscript(Box<Expr>),
+    /// `.?ident` — null-safe dot: propagates Null if receiver is Null or key missing
+    NullDot(String),
+    /// `.?[expr]` — null-safe subscript: propagates Null if receiver is Null or key missing
+    NullSubscript(Box<Expr>),
+}
+
+/// The first step of a path — how to look up the root key from the context.
+#[derive(Debug, Clone)]
+pub enum PathStart {
+    /// Plain identifier root: `foo` or `.foo` — strict lookup. Display omits the dot.
+    Ident(String),
+    /// `.?foo` — null-safe root lookup by identifier.
+    NullSafeIdent(String),
+    /// `.[expr]` — strict root subscript; expr must evaluate to Value::Str.
+    Subscript(Box<Expr>),
+    /// `.?[expr]` — null-safe root subscript.
+    NullSafeSubscript(Box<Expr>),
+}
+
 /// A parsed expression node.
+///
+/// Examples of `Path`:
+/// - `name`                   → `Path { start: Ident("name"), steps: [] }`
+/// - `user.address.city`      → `Path { start: Ident("user"), steps: [Dot("address"), Dot("city")] }`
+/// - `project.["010_intro"]`  → `Path { start: Ident("project"), steps: [Subscript(Literal("010_intro"))] }`
+/// - `a.[config.key].title`   → `Path { start: Ident("a"), steps: [Subscript(Path{Ident(config),[Dot(key)]}), Dot("title")] }`
 #[derive(Debug, Clone)]
 pub enum Expr {
     Literal(Value),
-    Path(String),
+    Path {
+        start: PathStart,
+        steps: Vec<PathStep>,
+    },
     Not(Box<Expr>),
     BinOp {
         op: BinOp,
@@ -35,6 +70,7 @@ pub enum BinOp {
     Mul,
     Div,
     Mod,
+    NullCoalesce, // ??
 }
 
 impl fmt::Display for BinOp {
@@ -53,6 +89,7 @@ impl fmt::Display for BinOp {
             BinOp::Mul => write!(f, "*"),
             BinOp::Div => write!(f, "/"),
             BinOp::Mod => write!(f, "%"),
+            BinOp::NullCoalesce => write!(f, "??"),
         }
     }
 }
@@ -68,7 +105,23 @@ impl fmt::Display for Expr {
                 Value::Null => write!(f, "null"),
                 _ => write!(f, "[expr]"),
             },
-            Expr::Path(p) => write!(f, "{}", p),
+            Expr::Path { start, steps } => {
+                match start {
+                    PathStart::Ident(s) => write!(f, "{}", s)?,
+                    PathStart::NullSafeIdent(s) => write!(f, ".?{}", s)?,
+                    PathStart::Subscript(e) => write!(f, ".[{}]", e)?,
+                    PathStart::NullSafeSubscript(e) => write!(f, ".?[{}]", e)?,
+                }
+                for step in steps {
+                    match step {
+                        PathStep::Dot(k) => write!(f, ".{}", k)?,
+                        PathStep::Subscript(e) => write!(f, ".[{}]", e)?,
+                        PathStep::NullDot(k) => write!(f, ".?{}", k)?,
+                        PathStep::NullSubscript(e) => write!(f, ".?[{}]", e)?,
+                    }
+                }
+                Ok(())
+            }
             Expr::Not(e) => write!(f, "!{}", e),
             Expr::BinOp { op, lhs, rhs } => write!(f, "{} {} {}", lhs, op, rhs),
             Expr::Call { name, args } => {
@@ -96,9 +149,13 @@ enum ExprToken {
     /// Two-char ops: "==", "!=", "<=", ">="  or single-char: "<", ">", "!"
     Op(String),
     Dot,
+    LBracket, // [
+    RBracket, // ]
     Comma,
     LParen,
     RParen,
+    NullCoalesce, // ??
+    DotQMark,     // .?
 }
 
 fn tokenize_expr(input: &str) -> Result<Vec<ExprToken>, String> {
@@ -171,7 +228,20 @@ fn tokenize_expr(input: &str) -> Result<Vec<ExprToken>, String> {
 
         match c {
             '.' => {
-                tokens.push(ExprToken::Dot);
+                if i + 1 < chars.len() && chars[i + 1] == '?' {
+                    tokens.push(ExprToken::DotQMark);
+                    i += 2;
+                } else {
+                    tokens.push(ExprToken::Dot);
+                    i += 1;
+                }
+            }
+            '[' => {
+                tokens.push(ExprToken::LBracket);
+                i += 1;
+            }
+            ']' => {
+                tokens.push(ExprToken::RBracket);
                 i += 1;
             }
             ',' => {
@@ -257,6 +327,16 @@ fn tokenize_expr(input: &str) -> Result<Vec<ExprToken>, String> {
                 tokens.push(ExprToken::Op("%".to_string()));
                 i += 1;
             }
+            '?' => {
+                if i + 1 < chars.len() && chars[i + 1] == '?' {
+                    tokens.push(ExprToken::NullCoalesce);
+                    i += 2;
+                } else {
+                    return Err(
+                        "Unexpected '?' — did you mean '??' (null-coalesce), '.?foo' (null-safe dot), or '.?[' (null-safe subscript)?".to_string()
+                    );
+                }
+            }
             other => return Err(format!("Unexpected character '{}' in expression", other)),
         }
     }
@@ -291,7 +371,21 @@ impl Parser {
     }
 
     fn parse_expr(&mut self) -> Result<Expr, String> {
-        self.parse_logical()
+        self.parse_null_coalesce()
+    }
+
+    fn parse_null_coalesce(&mut self) -> Result<Expr, String> {
+        let lhs = self.parse_logical()?;
+        if let Some(ExprToken::NullCoalesce) = self.peek() {
+            self.next_token(); // consume ??
+            let rhs = self.parse_null_coalesce()?; // right-associative recursion
+            return Ok(Expr::BinOp {
+                op: BinOp::NullCoalesce,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            });
+        }
+        Ok(lhs)
     }
 
     fn parse_logical(&mut self) -> Result<Expr, String> {
@@ -411,13 +505,11 @@ impl Parser {
                 self.next_token(); // consume '('
                 let e = self.parse_expr()?;
                 match self.next_token() {
-                    Some(ExprToken::RParen) => return Ok(e),
-                    other => {
-                        return Err(format!(
-                            "Expected ')' to close grouped expression, got {:?}",
-                            other
-                        ));
-                    }
+                    Some(ExprToken::RParen) => Ok(e),
+                    other => Err(format!(
+                        "Expected ')' to close grouped expression, got {:?}",
+                        other
+                    )),
                 }
             }
             Some(ExprToken::Int(_)) => {
@@ -480,30 +572,139 @@ impl Parser {
                         return Ok(Expr::Call { name, args });
                     }
 
-                    // Dotted path: ident ('.' ident)*
-                    let mut path = name;
-                    while let Some(ExprToken::Dot) = self.peek() {
-                        self.next_token(); // consume '.'
-                        match self.next_token() {
-                            Some(ExprToken::Ident(segment)) => {
-                                path.push('.');
-                                path.push_str(&segment);
-                            }
-                            other => {
-                                return Err(format!(
-                                    "Expected identifier after '.', got {:?}",
-                                    other
-                                ));
-                            }
-                        }
-                    }
-                    Ok(Expr::Path(path))
+                    // Path: ident (step)*
+                    let start = PathStart::Ident(name);
+                    let steps = self.parse_path_steps()?;
+                    Ok(Expr::Path { start, steps })
                 } else {
                     unreachable!()
                 }
             }
+            Some(ExprToken::Dot) => {
+                self.next_token(); // consume '.'
+                match self.next_token() {
+                    Some(ExprToken::Ident(name)) => {
+                        // .foo — strict root lookup, same AST as foo
+                        let start = PathStart::Ident(name);
+                        let steps = self.parse_path_steps()?;
+                        Ok(Expr::Path { start, steps })
+                    }
+                    Some(ExprToken::LBracket) => {
+                        // .[expr] — strict root subscript
+                        let key_expr = self.parse_expr()?;
+                        match self.next_token() {
+                            Some(ExprToken::RBracket) => {}
+                            other => {
+                                return Err(format!(
+                                    "Expected ']' after root subscript, got {:?}",
+                                    other
+                                ));
+                            }
+                        }
+                        let start = PathStart::Subscript(Box::new(key_expr));
+                        let steps = self.parse_path_steps()?;
+                        Ok(Expr::Path { start, steps })
+                    }
+                    other => Err(format!(
+                        "Expected identifier or '[' after '.', got {:?}",
+                        other
+                    )),
+                }
+            }
+            Some(ExprToken::DotQMark) => {
+                self.next_token(); // consume '.?'
+                match self.next_token() {
+                    Some(ExprToken::Ident(name)) => {
+                        // .?foo — null-safe root lookup
+                        let start = PathStart::NullSafeIdent(name);
+                        let steps = self.parse_path_steps()?;
+                        Ok(Expr::Path { start, steps })
+                    }
+                    Some(ExprToken::LBracket) => {
+                        // .?[expr] — null-safe root subscript
+                        let key_expr = self.parse_expr()?;
+                        match self.next_token() {
+                            Some(ExprToken::RBracket) => {}
+                            other => {
+                                return Err(format!(
+                                    "Expected ']' after null-safe root subscript, got {:?}",
+                                    other
+                                ));
+                            }
+                        }
+                        let start = PathStart::NullSafeSubscript(Box::new(key_expr));
+                        let steps = self.parse_path_steps()?;
+                        Ok(Expr::Path { start, steps })
+                    }
+                    other => Err(format!(
+                        "Expected identifier or '[' after '.?', got {:?}",
+                        other
+                    )),
+                }
+            }
             other => Err(format!("Expected expression, got {:?}", other)),
         }
+    }
+
+    fn parse_path_steps(&mut self) -> Result<Vec<PathStep>, String> {
+        let mut steps: Vec<PathStep> = Vec::new();
+        loop {
+            match self.peek() {
+                Some(ExprToken::Dot) => {
+                    self.next_token();
+                    match self.next_token() {
+                        Some(ExprToken::Ident(segment)) => steps.push(PathStep::Dot(segment)),
+                        Some(ExprToken::LBracket) => {
+                            // .[expr] — new strict subscript step syntax
+                            let key_expr = self.parse_expr()?;
+                            match self.next_token() {
+                                Some(ExprToken::RBracket) => {}
+                                other => {
+                                    return Err(format!(
+                                        "Expected ']' after subscript, got {:?}",
+                                        other
+                                    ));
+                                }
+                            }
+                            steps.push(PathStep::Subscript(Box::new(key_expr)));
+                        }
+                        other => {
+                            return Err(format!(
+                                "Expected identifier or '[' after '.', got {:?}",
+                                other
+                            ));
+                        }
+                    }
+                }
+                Some(ExprToken::DotQMark) => {
+                    self.next_token();
+                    match self.next_token() {
+                        Some(ExprToken::Ident(segment)) => steps.push(PathStep::NullDot(segment)),
+                        Some(ExprToken::LBracket) => {
+                            let key_expr = self.parse_expr()?;
+                            match self.next_token() {
+                                Some(ExprToken::RBracket) => {}
+                                other => {
+                                    return Err(format!(
+                                        "Expected ']' after null-safe subscript, got {:?}",
+                                        other
+                                    ));
+                                }
+                            }
+                            steps.push(PathStep::NullSubscript(Box::new(key_expr)));
+                        }
+                        other => {
+                            return Err(format!(
+                                "Expected identifier or '[' after '.?', got {:?}",
+                                other
+                            ));
+                        }
+                    }
+                }
+                _ => break,
+            }
+        }
+        Ok(steps)
     }
 }
 
@@ -589,27 +790,14 @@ mod tests {
     // --- Paths ---
 
     #[test]
-    fn test_path_simple() {
-        if let Expr::Path(p) = parse("name") {
-            assert_eq!(p, "name");
-        } else {
-            panic!("expected Path");
-        }
-    }
-
-    #[test]
-    fn test_path_dotted() {
-        if let Expr::Path(p) = parse("user.address.city") {
-            assert_eq!(p, "user.address.city");
-        } else {
-            panic!("expected Path");
-        }
-    }
-
-    #[test]
     fn test_path_unicode() {
-        if let Expr::Path(p) = parse("nåmë") {
-            assert_eq!(p, "nåmë");
+        if let Expr::Path {
+            start: PathStart::Ident(root),
+            steps,
+        } = parse("nåmë")
+        {
+            assert_eq!(root, "nåmë");
+            assert!(steps.is_empty());
         } else {
             panic!("expected Path");
         }
@@ -680,7 +868,7 @@ mod tests {
             rhs,
         } = parse("age < 18")
         {
-            assert!(matches!(*lhs, Expr::Path(_)));
+            assert!(matches!(*lhs, Expr::Path { .. }));
             assert!(matches!(*rhs, Expr::Literal(Value::Int(18))));
         } else {
             panic!("expected BinOp Lt");
@@ -695,7 +883,7 @@ mod tests {
             rhs,
         } = parse("name == \"Alice\"")
         {
-            assert!(matches!(*lhs, Expr::Path(_)));
+            assert!(matches!(*lhs, Expr::Path { .. }));
             assert!(matches!(*rhs, Expr::Literal(Value::Str(_))));
         } else {
             panic!("expected BinOp Eq");
@@ -719,7 +907,9 @@ mod tests {
         if let Expr::Call { name, args } = parse("len(items)") {
             assert_eq!(name, "len");
             assert_eq!(args.len(), 1);
-            assert!(matches!(&args[0], Expr::Path(p) if p == "items"));
+            assert!(
+                matches!(&args[0], Expr::Path { start: PathStart::Ident(s), .. } if s == "items")
+            );
         } else {
             panic!("expected Call");
         }
@@ -739,7 +929,17 @@ mod tests {
     fn test_call_nested_expr_arg() {
         // starts_with(user.name, "A")
         if let Expr::Call { args, .. } = parse("starts_with(user.name, \"A\")") {
-            assert!(matches!(&args[0], Expr::Path(p) if p == "user.name"));
+            if let Expr::Path {
+                start: PathStart::Ident(root),
+                steps,
+            } = &args[0]
+            {
+                assert_eq!(root, "user");
+                assert_eq!(steps.len(), 1);
+                assert!(matches!(&steps[0], PathStep::Dot(k) if k == "name"));
+            } else {
+                panic!("expected Path as first arg");
+            }
         } else {
             panic!("expected Call");
         }
@@ -817,7 +1017,475 @@ mod tests {
     }
 
     #[test]
-    fn test_error_leading_dot() {
-        assert!(parse_expr(".a").is_err());
+    fn test_error_leading_dot_bare() {
+        // A bare leading dot with no ident or '[' after it is still an error
+        assert!(parse_expr(".[").is_err());
+        assert!(parse_expr(".").is_err());
+    }
+
+    // --- Subscript / PathStep tests ---
+
+    #[test]
+    fn test_subscript_literal_key() {
+        if let Expr::Path {
+            start: PathStart::Ident(root),
+            steps,
+        } = parse("project.[\"meta\"]")
+        {
+            assert_eq!(root, "project");
+            assert_eq!(steps.len(), 1);
+            if let PathStep::Subscript(key_expr) = &steps[0] {
+                assert!(matches!(key_expr.as_ref(), Expr::Literal(Value::Str(s)) if s == "meta"));
+            } else {
+                panic!("expected Subscript step");
+            }
+        } else {
+            panic!("expected Path");
+        }
+    }
+
+    #[test]
+    fn test_subscript_numeric_string_key() {
+        if let Expr::Path {
+            start: PathStart::Ident(root),
+            steps,
+        } = parse("project.[\"010_intro\"]")
+        {
+            assert_eq!(root, "project");
+            assert_eq!(steps.len(), 1);
+            if let PathStep::Subscript(key_expr) = &steps[0] {
+                assert!(
+                    matches!(key_expr.as_ref(), Expr::Literal(Value::Str(s)) if s == "010_intro")
+                );
+            } else {
+                panic!("expected Subscript step");
+            }
+        } else {
+            panic!("expected Path");
+        }
+    }
+
+    #[test]
+    fn test_subscript_dynamic_path() {
+        if let Expr::Path {
+            start: PathStart::Ident(root),
+            steps,
+        } = parse("a.[b]")
+        {
+            assert_eq!(root, "a");
+            if let PathStep::Subscript(key_expr) = &steps[0] {
+                assert!(
+                    matches!(key_expr.as_ref(), Expr::Path { start: PathStart::Ident(s), .. } if s == "b")
+                );
+            } else {
+                panic!("expected Subscript step");
+            }
+        } else {
+            panic!("expected Path");
+        }
+    }
+
+    #[test]
+    fn test_subscript_dynamic_dotted_path() {
+        if let Expr::Path {
+            start: PathStart::Ident(root),
+            steps,
+        } = parse("a.[config.key_name]")
+        {
+            assert_eq!(root, "a");
+            if let PathStep::Subscript(key_expr) = &steps[0] {
+                if let Expr::Path {
+                    start: PathStart::Ident(root),
+                    steps,
+                } = key_expr.as_ref()
+                {
+                    assert_eq!(root, "config");
+                    assert_eq!(steps.len(), 1);
+                    assert!(matches!(&steps[0], PathStep::Dot(k) if k == "key_name"));
+                } else {
+                    panic!("expected Path inside Subscript");
+                }
+            } else {
+                panic!("expected Subscript step");
+            }
+        } else {
+            panic!("expected Path");
+        }
+    }
+
+    #[test]
+    fn test_mixed_dot_and_subscript() {
+        if let Expr::Path {
+            start: PathStart::Ident(root),
+            steps,
+        } = parse("project.[\"010_intro\"].meta.title")
+        {
+            assert_eq!(root, "project");
+            assert_eq!(steps.len(), 3);
+            assert!(matches!(&steps[0], PathStep::Subscript(_)));
+            assert!(matches!(&steps[1], PathStep::Dot(k) if k == "meta"));
+            assert!(matches!(&steps[2], PathStep::Dot(k) if k == "title"));
+        } else {
+            panic!("expected Path");
+        }
+    }
+
+    #[test]
+    fn test_subscript_single_quote() {
+        if let Expr::Path { steps, .. } = parse("x.['key']") {
+            if let PathStep::Subscript(key_expr) = &steps[0] {
+                assert!(matches!(key_expr.as_ref(), Expr::Literal(Value::Str(s)) if s == "key"));
+            } else {
+                panic!("expected Subscript step");
+            }
+        } else {
+            panic!("expected Path");
+        }
+    }
+
+    #[test]
+    fn test_subscript_display_literal() {
+        assert_eq!(
+            parse("project.[\"meta\"].title").to_string(),
+            "project.[\"meta\"].title"
+        );
+    }
+
+    #[test]
+    fn test_subscript_display_dynamic() {
+        assert_eq!(parse("a.[b]").to_string(), "a.[b]");
+        assert_eq!(parse("a.[config.key]").to_string(), "a.[config.key]");
+    }
+
+    #[test]
+    fn test_subscript_integer_key_parses_ok() {
+        // a.[42] is valid at parse time — key is Expr::Literal(Int(42))
+        assert!(parse_expr("a.[42]").is_ok());
+    }
+
+    #[test]
+    fn test_error_subscript_missing_bracket() {
+        assert!(parse_expr("project.[\"key\"").is_err());
+    }
+
+    #[test]
+    fn test_subscript_empty_string_key() {
+        if let Expr::Path { steps, .. } = parse("x.[\"\"]") {
+            if let PathStep::Subscript(key_expr) = &steps[0] {
+                assert!(matches!(key_expr.as_ref(), Expr::Literal(Value::Str(s)) if s.is_empty()));
+            } else {
+                panic!("expected Subscript step");
+            }
+        } else {
+            panic!("expected Path");
+        }
+    }
+
+    #[test]
+    fn test_path_simple_struct() {
+        if let Expr::Path {
+            start: PathStart::Ident(root),
+            steps,
+        } = parse("name")
+        {
+            assert_eq!(root, "name");
+            assert!(steps.is_empty());
+        } else {
+            panic!("expected Path");
+        }
+    }
+
+    #[test]
+    fn test_path_dotted_struct() {
+        if let Expr::Path {
+            start: PathStart::Ident(root),
+            steps,
+        } = parse("user.address.city")
+        {
+            assert_eq!(root, "user");
+            assert_eq!(steps.len(), 2);
+            assert!(matches!(&steps[0], PathStep::Dot(k) if k == "address"));
+            assert!(matches!(&steps[1], PathStep::Dot(k) if k == "city"));
+        } else {
+            panic!("expected Path");
+        }
+    }
+
+    // --- Null-coalescing operator ---
+
+    #[test]
+    fn test_null_coalesce_parse() {
+        if let Expr::BinOp {
+            op: BinOp::NullCoalesce,
+            lhs,
+            rhs,
+        } = parse("a ?? b")
+        {
+            assert!(matches!(*lhs, Expr::Path { .. }));
+            assert!(matches!(*rhs, Expr::Path { .. }));
+        } else {
+            panic!("expected NullCoalesce BinOp");
+        }
+    }
+
+    #[test]
+    fn test_null_coalesce_with_literal() {
+        assert!(matches!(
+            parse("x ?? \"default\""),
+            Expr::BinOp {
+                op: BinOp::NullCoalesce,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_null_coalesce_precedence_lower_than_comparison() {
+        // a == b ?? c  →  (a == b) ?? c
+        if let Expr::BinOp {
+            op: BinOp::NullCoalesce,
+            lhs,
+            ..
+        } = parse("a == b ?? c")
+        {
+            assert!(matches!(*lhs, Expr::BinOp { op: BinOp::Eq, .. }));
+        } else {
+            panic!("expected NullCoalesce at top, Eq inside lhs");
+        }
+    }
+
+    #[test]
+    fn test_null_coalesce_display() {
+        assert_eq!(parse("x ?? \"fallback\"").to_string(), "x ?? \"fallback\"");
+    }
+
+    // --- Null-safe access operators ---
+
+    #[test]
+    fn test_null_safe_dot_parse() {
+        if let Expr::Path {
+            start: PathStart::Ident(root),
+            steps,
+        } = parse("a.?b")
+        {
+            assert_eq!(root, "a");
+            assert_eq!(steps.len(), 1);
+            assert!(matches!(&steps[0], PathStep::NullDot(k) if k == "b"));
+        } else {
+            panic!("expected Path");
+        }
+    }
+
+    #[test]
+    fn test_null_safe_subscript_literal() {
+        // project.?["010_intro"] — null-safe subscript with string literal key
+        if let Expr::Path {
+            start: PathStart::Ident(root),
+            steps,
+        } = parse("project.?[\"010_intro\"]")
+        {
+            assert_eq!(root, "project");
+            if let PathStep::NullSubscript(key_expr) = &steps[0] {
+                assert!(
+                    matches!(key_expr.as_ref(), Expr::Literal(Value::Str(s)) if s == "010_intro")
+                );
+            } else {
+                panic!("expected NullSubscript step");
+            }
+        } else {
+            panic!("expected Path");
+        }
+    }
+
+    #[test]
+    fn test_null_safe_subscript_dynamic() {
+        // project.?[key_var] — null-safe subscript with dynamic key
+        if let Expr::Path {
+            start: PathStart::Ident(root),
+            steps,
+        } = parse("project.?[key_var]")
+        {
+            assert_eq!(root, "project");
+            if let PathStep::NullSubscript(key_expr) = &steps[0] {
+                assert!(
+                    matches!(key_expr.as_ref(), Expr::Path { start: PathStart::Ident(s), .. } if s == "key_var")
+                );
+            } else {
+                panic!("expected NullSubscript step");
+            }
+        } else {
+            panic!("expected Path");
+        }
+    }
+
+    #[test]
+    fn test_null_safe_chained() {
+        if let Expr::Path {
+            start: PathStart::Ident(root),
+            steps,
+        } = parse("project.?meta.?title")
+        {
+            assert_eq!(root, "project");
+            assert_eq!(steps.len(), 2);
+            assert!(matches!(&steps[0], PathStep::NullDot(k) if k == "meta"));
+            assert!(matches!(&steps[1], PathStep::NullDot(k) if k == "title"));
+        } else {
+            panic!("expected Path");
+        }
+    }
+
+    #[test]
+    fn test_null_safe_mixed_with_subscript_and_coalesce() {
+        // project.?["010_intro"].?meta.title ?? "Untitled"
+        if let Expr::BinOp {
+            op: BinOp::NullCoalesce,
+            lhs,
+            rhs,
+        } = parse("project.?[\"010_intro\"].?meta.title ?? \"Untitled\"")
+        {
+            if let Expr::Path {
+                start: PathStart::Ident(root),
+                steps,
+            } = *lhs
+            {
+                assert_eq!(root, "project");
+                assert_eq!(steps.len(), 3);
+                assert!(matches!(&steps[0], PathStep::NullSubscript(_)));
+                assert!(matches!(&steps[1], PathStep::NullDot(k) if k == "meta"));
+                assert!(matches!(&steps[2], PathStep::Dot(k) if k == "title"));
+            } else {
+                panic!("expected Path as lhs");
+            }
+            assert!(matches!(*rhs, Expr::Literal(Value::Str(_))));
+        } else {
+            panic!("expected NullCoalesce at top level");
+        }
+    }
+
+    #[test]
+    fn test_null_safe_dot_display() {
+        assert_eq!(parse("a.?b").to_string(), "a.?b");
+    }
+
+    #[test]
+    fn test_null_safe_subscript_display_literal() {
+        assert_eq!(
+            parse("project.?[\"key\"]").to_string(),
+            "project.?[\"key\"]"
+        );
+    }
+
+    #[test]
+    fn test_null_safe_subscript_display_dynamic() {
+        assert_eq!(
+            parse("project.?[key_var]").to_string(),
+            "project.?[key_var]"
+        );
+    }
+
+    // --- New root-start forms ---
+
+    #[test]
+    fn test_root_subscript_literal() {
+        if let Expr::Path {
+            start: PathStart::Subscript(key_expr),
+            steps,
+        } = parse(".[\"010_intro\"]")
+        {
+            assert!(matches!(key_expr.as_ref(), Expr::Literal(Value::Str(s)) if s == "010_intro"));
+            assert!(steps.is_empty());
+        } else {
+            panic!("expected Path with Subscript start");
+        }
+    }
+
+    #[test]
+    fn test_root_subscript_dynamic() {
+        if let Expr::Path {
+            start: PathStart::Subscript(key_expr),
+            steps,
+        } = parse(".[key]")
+        {
+            assert!(
+                matches!(key_expr.as_ref(), Expr::Path { start: PathStart::Ident(s), .. } if s == "key")
+            );
+            assert!(steps.is_empty());
+        } else {
+            panic!("expected Path with Subscript start");
+        }
+    }
+
+    #[test]
+    fn test_root_null_safe_ident() {
+        if let Expr::Path {
+            start: PathStart::NullSafeIdent(s),
+            steps,
+        } = parse(".?title")
+        {
+            assert_eq!(s, "title");
+            assert!(steps.is_empty());
+        } else {
+            panic!("expected Path with NullSafeIdent start");
+        }
+    }
+
+    #[test]
+    fn test_root_null_safe_subscript() {
+        if let Expr::Path {
+            start: PathStart::NullSafeSubscript(key_expr),
+            steps,
+        } = parse(".?[\"key\"]")
+        {
+            assert!(matches!(key_expr.as_ref(), Expr::Literal(Value::Str(s)) if s == "key"));
+            assert!(steps.is_empty());
+        } else {
+            panic!("expected Path with NullSafeSubscript start");
+        }
+    }
+
+    #[test]
+    fn test_dot_foo_same_ast_as_foo() {
+        let with_dot = parse(".foo");
+        let without_dot = parse("foo");
+        assert_eq!(with_dot.to_string(), without_dot.to_string());
+        if let (
+            Expr::Path {
+                start: PathStart::Ident(a),
+                steps: steps_a,
+            },
+            Expr::Path {
+                start: PathStart::Ident(b),
+                steps: steps_b,
+            },
+        ) = (&with_dot, &without_dot)
+        {
+            assert_eq!(a, b);
+            assert_eq!(steps_a.len(), steps_b.len());
+        } else {
+            panic!("expected both to be Path with Ident start");
+        }
+    }
+
+    #[test]
+    fn test_leading_dot_is_valid() {
+        assert!(parse_expr(".foo").is_ok());
+        assert!(parse_expr(".[\"key\"]").is_ok());
+        assert!(parse_expr(".?title").is_ok());
+        assert!(parse_expr(".?[\"key\"]").is_ok());
+    }
+
+    #[test]
+    fn test_root_subscript_display() {
+        assert_eq!(parse(".[\"key\"]").to_string(), ".[\"key\"]");
+    }
+
+    #[test]
+    fn test_root_null_safe_ident_display() {
+        assert_eq!(parse(".?foo").to_string(), ".?foo");
+    }
+
+    #[test]
+    fn test_root_null_safe_subscript_display() {
+        assert_eq!(parse(".?[\"key\"]").to_string(), ".?[\"key\"]");
     }
 }
